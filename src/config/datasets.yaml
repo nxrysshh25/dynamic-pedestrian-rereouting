@@ -1,0 +1,20 @@
+# datasets.yaml
+active: "vit_vellore"
+available:
+  - melbourne
+  - vit_vellore
+
+datasets:
+  melbourne:
+    name: "Melbourne CBD"
+    center: [144.965, -37.813] # [lon, lat]
+    zoom: 14.5
+    default_origin: [144.9669, -37.8183] # Flinders
+    default_destination: [144.9646, -37.8098] # State Library
+  
+  vit_vellore:
+    name: "VIT Vellore Campus"
+    center: [79.155, 12.971] # [lon, lat] approx VIT Vellore
+    zoom: 15.5
+    default_origin: [79.1559, 12.9692] # SJT (approx)
+    default_destination: [79.1583, 12.9718] # Main Gate (approx)
