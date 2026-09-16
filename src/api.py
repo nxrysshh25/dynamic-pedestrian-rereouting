@@ -282,6 +282,38 @@ def get_academic_blocks():
             return {"type": "FeatureCollection", "features": features}
     return {"type": "FeatureCollection", "features": []}
 
+@app.get("/api/pedestrian_network/stats")
+def get_pedestrian_network_stats():
+    if G_base is None:
+        return {}
+    
+    stairs = 0
+    ramps = 0
+    crossings = 0
+    barriers = 0
+    slopes = 0
+    
+    for u, v, d in G_base.edges(data=True):
+        if d.get("stairs"): stairs += 1
+        if d.get("ramp"): ramps += 1
+        if d.get("crossing") and d.get("crossing") != "no": crossings += 1
+        if d.get("barrier") and d.get("barrier") != "no": barriers += 1
+        
+        status = d.get("slope_status")
+        percent = d.get("slope_percent")
+        if status in ["up", "down"]:
+            slopes += 1
+        elif status == "measured" and percent is not None and percent > 4:
+            slopes += 1
+            
+    return {
+        "stairs": stairs,
+        "ramps": ramps,
+        "crossings": crossings,
+        "barriers": barriers,
+        "slopes": slopes
+    }
+
 @app.get("/api/pedestrian_network")
 def get_pedestrian_network():
     if G_base is None:
@@ -323,7 +355,11 @@ def get_pedestrian_network():
             "display_name": props.get("display_name"),
             "stairs": props.get("stairs", False),
             "ramp": props.get("ramp", False),
-            "highway": props.get("highway")
+            "highway": props.get("highway"),
+            "slope_percent": props.get("slope_percent"),
+            "slope_status": props.get("slope_status"),
+            "barrier": props.get("barrier"),
+            "crossing": props.get("crossing")
         }
                 
         features.append({

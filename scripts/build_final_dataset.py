@@ -109,10 +109,18 @@ def build_dataset():
             geom = None
             geom_dist = 0.0
         slope_val = row.get('slope_percent')
-        try:
-            slope_percent = float(slope_val) if pd.notna(slope_val) else 0.0
-        except ValueError:
-            slope_percent = 0.0
+        slope_percent = None
+        slope_status = 'unknown'
+        if pd.notna(slope_val):
+            val_str = str(slope_val).strip().lower()
+            if val_str in ['up', 'down']:
+                slope_status = val_str
+            else:
+                try:
+                    slope_percent = float(val_str)
+                    slope_status = 'measured'
+                except ValueError:
+                    slope_percent = None
             
         edge_data = {
             'edge_id': str(row['edge_id']),
@@ -134,7 +142,7 @@ def build_dataset():
             'barrier': str(row['barrier']) if pd.notna(row.get('barrier')) else 'no',
             'wheelchair': str(row['wheelchair_access']) if pd.notna(row.get('wheelchair_access')) else 'yes',
             'slope_percent': slope_percent,
-            'slope_status': 'unknown',
+            'slope_status': slope_status,
             'lit': str(row['lit']) if pd.notna(row.get('lit')) else 'unknown',
             'traffic': str(row['traffic_level']) if pd.notna(row.get('traffic_level')) else 'unknown',
             'restricted': False,
@@ -317,6 +325,9 @@ def build_dataset():
     stairs_features = []
     ramps_features = []
     crossings_features = []
+    slopes_features = []
+    barriers_features = []
+    highway_features = []
     
     for u, v, k, data in G.edges(keys=True, data=True):
         geom = data['geometry']
@@ -339,11 +350,20 @@ def build_dataset():
             ramps_features.append(feature)
         if data.get('crossing') and data.get('crossing') != 'no':
             crossings_features.append(feature)
+        if data.get('slope_status') in ['up', 'down', 'measured'] or data.get('slope_percent') is not None:
+            slopes_features.append(feature)
+        if data.get('barrier') and data.get('barrier') != 'no':
+            barriers_features.append(feature)
+        if data.get('highway'):
+            highway_features.append(feature)
             
     export_geojson(edge_features, OUT_DIR / 'pedestrian_edges.geojson')
     export_geojson(stairs_features, OUT_DIR / 'stairs.geojson')
     export_geojson(ramps_features, OUT_DIR / 'ramps.geojson')
     export_geojson(crossings_features, OUT_DIR / 'crossings.geojson')
+    export_geojson(slopes_features, OUT_DIR / 'slopes.geojson')
+    export_geojson(barriers_features, OUT_DIR / 'barriers.geojson')
+    export_geojson(highway_features, OUT_DIR / 'highway_types.geojson')
     
     with open(OUT_DIR / 'vit_manual_locations.json', 'w') as f:
         json.dump(manual_locs, f, indent=4)

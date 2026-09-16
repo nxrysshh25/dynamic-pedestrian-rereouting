@@ -1,78 +1,17 @@
 {
     "topology": {
-        "num_components": 1,
-        "isolated_nodes": 0,
+        "num_components": 9,
+        "isolated_nodes": 2,
         "self_loops": 0,
-        "nodes": 820,
-        "edges": 943
+        "nodes": 1551,
+        "edges": 1697
     },
-    "routing": [
-        {
-            "route": "MB->GDN",
-            "status": "success",
-            "length_nodes": 19,
-            "distance_m": 206.07,
-            "stairs_used": 0,
-            "ramps_used": 0,
-            "accessible_route_available": true,
-            "alternative_route_available": true
-        },
-        {
-            "route": "GDN->TT",
-            "status": "success",
-            "length_nodes": 28,
-            "distance_m": 552.25,
-            "stairs_used": 2,
-            "ramps_used": 0,
-            "accessible_route_available": true,
-            "alternative_route_available": true
-        },
-        {
-            "route": "TT->SJT",
-            "status": "success",
-            "length_nodes": 25,
-            "distance_m": 543.28,
-            "stairs_used": 0,
-            "ramps_used": 0,
-            "accessible_route_available": true,
-            "alternative_route_available": true
-        },
-        {
-            "route": "SJT->SMV",
-            "status": "success",
-            "length_nodes": 41,
-            "distance_m": 873.41,
-            "stairs_used": 0,
-            "ramps_used": 0,
-            "accessible_route_available": true,
-            "alternative_route_available": true
-        },
-        {
-            "route": "SMV->CBMR",
-            "status": "success",
-            "length_nodes": 35,
-            "distance_m": 1294.19,
-            "stairs_used": 0,
-            "ramps_used": 0,
-            "accessible_route_available": true,
-            "alternative_route_available": true
-        },
-        {
-            "route": "CBMR->CTS",
-            "status": "success",
-            "length_nodes": 53,
-            "distance_m": 1470.41,
-            "stairs_used": 1,
-            "ramps_used": 0,
-            "accessible_route_available": true,
-            "alternative_route_available": true
-        }
-    ],
+    "routing": [],
     "data_quality": {
         "academic_blocks_mapped": 10,
         "stairs_mapped": 7,
         "ramps_mapped": 0,
-        "edges_total": 943,
-        "nodes_total": 820
+        "edges_total": 1697,
+        "nodes_total": 1551
     }
 }

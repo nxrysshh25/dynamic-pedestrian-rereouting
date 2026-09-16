@@ -5,6 +5,7 @@ import StatsOverlay from './components/StatsOverlay'
 import SimulationControls from './components/SimulationControls'
 import SignalDecayMonitor from './components/SignalDecayMonitor'
 import CongestionSelectionPanel from './components/CongestionSelectionPanel'
+import MapLegend from './components/MapLegend'
 import './index.css'
 
 function App() {
@@ -197,6 +198,8 @@ function App() {
             onInject={handleInjectCongestion}
           />
         )}
+        
+        <MapLegend />
       </div>
     </div>
   )

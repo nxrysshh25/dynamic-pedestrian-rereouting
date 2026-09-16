@@ -184,74 +184,192 @@ export default function MapCanvas({ routeData, injectMode, onMapClick, activeEve
         {/* Background Pedestrian Network Layer */}
         {pedestrianNetwork && pedestrianNetwork.features.length > 0 && (
           <Source id="pedestrian-network-source" type="geojson" data={pedestrianNetwork}>
-            {/* Standard footways */}
+            {/* Standard Pedestrian Paths (footway, path, pedestrian) */}
             <Layer
               id="pedestrian-network-base"
               type="line"
-              filter={['!has', 'stairs']}
+              filter={['match', ['get', 'highway'], ['footway', 'pedestrian', 'path'], true, false]}
               layout={{ 'line-join': 'round', 'line-cap': 'round' }}
               paint={{
                 'line-color': '#9ca3af', // gray-400
-                'line-width': 2,
-                'line-opacity': 0.4
+                'line-width': 2.5,
+                'line-opacity': 0.8
               }}
             />
-            {/* Stairs */}
+            
+            {/* Restricted Paths (e.g. primary, tertiary, service) */}
             <Layer
-              id="pedestrian-network-stairs"
+              id="pedestrian-network-restricted"
+              type="line"
+              filter={['match', ['get', 'highway'], ['primary', 'secondary', 'tertiary', 'service', 'residential', 'unclassified', 'track'], true, false]}
+              layout={{ 'line-join': 'round', 'line-cap': 'round' }}
+              paint={{
+                'line-color': '#d1d5db', // gray-300
+                'line-width': 1.5,
+                'line-dasharray': [2, 2],
+                'line-opacity': 0.6
+              }}
+            />
+            
+            {/* Slopes Base Line */}
+            <Layer
+              id="pedestrian-network-slopes-line"
+              type="line"
+              filter={[
+                'any',
+                ['in', ['get', 'slope_status'], ['literal', ['up', 'down']]],
+                ['all',
+                  ['==', ['get', 'slope_status'], 'measured'],
+                  ['>', ['get', 'slope_percent'], 4]
+                ]
+              ]}
+              layout={{ 'line-join': 'round', 'line-cap': 'round' }}
+              paint={{
+                'line-color': '#8b5cf6', // purple
+                'line-width': ['interpolate', ['linear'], ['zoom'], 15, 3, 18, 6],
+                'line-opacity': 1.0
+              }}
+            />
+            
+            {/* Crossings Base Line */}
+            <Layer
+              id="pedestrian-network-crossings-line"
+              type="line"
+              filter={['!=', 'crossing', 'no']}
+              layout={{ 'line-join': 'round', 'line-cap': 'round' }}
+              paint={{
+                'line-color': '#60a5fa', // blue
+                'line-width': ['interpolate', ['linear'], ['zoom'], 15, 3, 18, 6],
+                'line-dasharray': [2, 2], // actual dashes, not dots
+                'line-opacity': 0.9
+              }}
+            />
+            
+            {/* Barriers Base Line */}
+            <Layer
+              id="pedestrian-network-barriers-line"
+              type="line"
+              filter={['!=', 'barrier', 'no']}
+              layout={{ 'line-join': 'round', 'line-cap': 'round' }}
+              paint={{
+                'line-color': '#ef4444', // red
+                'line-width': ['interpolate', ['linear'], ['zoom'], 15, 3, 18, 6],
+                'line-opacity': 0.9
+              }}
+            />
+            
+            {/* Stairs Base Line */}
+            <Layer
+              id="pedestrian-network-stairs-line"
               type="line"
               filter={['==', 'stairs', true]}
               layout={{ 'line-join': 'round', 'line-cap': 'round' }}
               paint={{
-                'line-color': '#f59e0b', // amber
-                'line-width': 3,
-                'line-dasharray': [1, 1],
-                'line-opacity': 0.8
+                'line-color': '#b45309', // darker amber for better visibility
+                'line-width': ['interpolate', ['linear'], ['zoom'], 15, 4, 18, 8],
+                'line-dasharray': [0.5, 0.5], // step pattern
+                'line-opacity': 1.0
               }}
             />
-            {/* Ramps */}
+            
+            {/* Ramps Base Line */}
             <Layer
-              id="pedestrian-network-ramps"
+              id="pedestrian-network-ramps-line"
               type="line"
               filter={['==', 'ramp', true]}
               layout={{ 'line-join': 'round', 'line-cap': 'round' }}
               paint={{
                 'line-color': '#10b981', // emerald
-                'line-width': 4,
-                'line-opacity': 0.8
+                'line-width': ['interpolate', ['linear'], ['zoom'], 15, 4, 18, 8],
+                'line-opacity': 1.0
               }}
             />
-            {/* Crossings - DISABLED FOR DEBUGGING BLUE DOTS
+
+            {/* Symbols and Labels for all features */}
             <Layer
-              id="pedestrian-network-crossings"
-              type="line"
-              filter={['==', 'highway', 'crossing']}
-              layout={{ 'line-join': 'round', 'line-cap': 'round' }}
+              id="feature-labels"
+              type="symbol"
+              filter={[
+                'any',
+                ['==', 'stairs', true],
+                ['==', 'ramp', true],
+                ['!=', 'crossing', 'no'],
+                ['!=', 'barrier', 'no'],
+                ['in', ['get', 'slope_status'], ['literal', ['up', 'down']]],
+                ['all',
+                  ['==', ['get', 'slope_status'], 'measured'],
+                  ['>', ['get', 'slope_percent'], 4]
+                ]
+              ]}
+              layout={{
+                'symbol-placement': 'line',
+                'symbol-spacing': ['interpolate', ['linear'], ['zoom'], 14, 500, 18, 150],
+                'text-field': [
+                  'case',
+                  ['==', ['get', 'stairs'], true], '🪜 STAIRS',
+                  ['==', ['get', 'ramp'], true], '♿ RAMP',
+                  ['!=', ['get', 'barrier'], 'no'], '🚧 BARRIER',
+                  ['!=', ['get', 'crossing'], 'no'], '🚸 CROSSING',
+                  ['==', ['get', 'slope_status'], 'measured'], ['concat', '↗ ', ['get', 'slope_percent'], '% SLOPE'],
+                  ['==', ['get', 'slope_status'], 'up'], '↗ UPHILL',
+                  ['==', ['get', 'slope_status'], 'down'], '↘ DOWNHILL',
+                  ''
+                ],
+                'text-font': ['Open Sans Bold'],
+                'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10, 18, 14],
+                'text-max-angle': 45,
+                'text-pitch-alignment': 'viewport',
+                'text-keep-upright': true,
+                'text-allow-overlap': false
+              }}
               paint={{
-                'line-color': '#60a5fa', // lighter blue
-                'line-width': 4,
-                'line-dasharray': [2, 2], // actual dashes instead of dots to prevent looking like nodes
-                'line-opacity': 0.8
+                'text-color': [
+                  'case',
+                  ['==', ['get', 'stairs'], true], '#92400e',
+                  ['==', ['get', 'ramp'], true], '#065f46',
+                  ['!=', ['get', 'barrier'], 'no'], '#991b1b',
+                  ['!=', ['get', 'crossing'], 'no'], '#1e40af',
+                  ['in', ['get', 'slope_status'], ['literal', ['up', 'down']]], '#4c1d95',
+                  ['all',
+                    ['==', ['get', 'slope_status'], 'measured'],
+                    ['>', ['get', 'slope_percent'], 4]
+                  ], '#4c1d95',
+                  '#1f2937'
+                ],
+                'text-halo-color': '#ffffff',
+                'text-halo-width': 2
               }}
             />
-            */}
-            {/* Pedestrian Edge Labels */}
+            
+            {/* Standard Edge Labels (fallback for normal walkways) */}
             <Layer
               id="pedestrian-edge-labels"
               type="symbol"
-              filter={['has', 'display_name']}
+              filter={[
+                'all',
+                ['has', 'display_name'],
+                ['!=', ['get', 'stairs'], true],
+                ['!=', ['get', 'ramp'], true],
+                ['==', ['get', 'crossing'], 'no'],
+                ['==', ['get', 'barrier'], 'no'],
+                ['!', ['in', ['get', 'slope_status'], ['literal', ['up', 'down']]]],
+                ['!', ['all',
+                  ['==', ['get', 'slope_status'], 'measured'],
+                  ['>', ['get', 'slope_percent'], 4]
+                ]]
+              ]}
               layout={{
                 'symbol-placement': 'line',
                 'text-field': ['get', 'display_name'],
                 'text-font': ['Open Sans Regular'],
-                'text-size': 13,
+                'text-size': 12,
                 'text-max-angle': 45,
                 'text-pitch-alignment': 'viewport',
                 'text-keep-upright': true,
                 'symbol-spacing': 250
               }}
               paint={{
-                'text-color': '#1f2937',
+                'text-color': '#4b5563',
                 'text-halo-color': '#ffffff',
                 'text-halo-width': 2
               }}
@@ -403,6 +521,27 @@ export default function MapCanvas({ routeData, injectMode, onMapClick, activeEve
                 'line-color': ['get', 'color'],
                 'line-width': 8,
                 'line-opacity': ['get', 'opacity']
+              }}
+            />
+            <Layer
+              id="active-events-label"
+              type="symbol"
+              layout={{
+                'symbol-placement': 'line',
+                'text-field': '🚨 CONGESTION',
+                'text-font': ['Open Sans Bold'],
+                'text-size': 14,
+                'text-max-angle': 45,
+                'text-pitch-alignment': 'viewport',
+                'text-keep-upright': true,
+                'symbol-spacing': 250
+              }}
+              paint={{
+                'text-color': '#dc2626',
+                'text-opacity': ['get', 'opacity'],
+                'text-halo-color': '#ffffff',
+                'text-halo-width': 2,
+                'text-halo-opacity': ['get', 'opacity']
               }}
             />
           </Source>
