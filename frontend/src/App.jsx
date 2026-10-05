@@ -1,33 +1,24 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import Sidebar from './components/Sidebar'
 import MapCanvas from './components/MapCanvas'
-import StatsOverlay from './components/StatsOverlay'
-import SimulationControls from './components/SimulationControls'
-import SignalDecayMonitor from './components/SignalDecayMonitor'
-import CongestionSelectionPanel from './components/CongestionSelectionPanel'
 import MapLegend from './components/MapLegend'
+import DARRDecisionPanel from './components/DARRDecisionPanel'
+import AccessibilityVerification from './components/AccessibilityVerification'
 import './index.css'
 
 function App() {
   const [routeData, setRouteData] = useState(null);
+  const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   
-  const [simState, setSimState] = useState(null);
-  const [injectMode, setInjectMode] = useState(false);
-  
-  const [selectedEdge, setSelectedEdge] = useState(null);
-  const [showCongestionPanel, setShowCongestionPanel] = useState(false);
-  
+  // PCVC state
+  const [activeTab, setActiveTab] = useState('pcvc'); // 'darr' or 'pcvc'
+  const [verificationTarget, setVerificationTarget] = useState(null);
+  const [verificationAnchor, setVerificationAnchor] = useState(null);
+
   // Store last requested route parameters for recalculation
   const lastRequest = useRef(null);
-
-  useEffect(() => {
-    fetch('http://127.0.0.1:8000/api/simulation/state')
-      .then(res => res.json())
-      .then(setSimState)
-      .catch(console.error);
-  }, []);
 
   const handleRouteCalculation = useCallback(async (origin, destination, profile, isBackground = false, originName = 'Origin', destName = 'Destination') => {
     if (!isBackground) {
@@ -56,6 +47,11 @@ function App() {
       data.originName = originName;
       data.destName = destName;
       setRouteData(data);
+      if (data.selected_candidate) {
+        setSelectedCandidate(data.selected_candidate);
+      }
+      // When route arrives, auto-switch to DARR tab
+      setActiveTab('darr');
     } catch (err) {
       if (!isBackground) {
         if (err.message.includes('Failed to fetch')) {
@@ -86,63 +82,6 @@ function App() {
     }
   }, [handleRouteCalculation]);
 
-  const handleMapClick = async (lon, lat) => {
-    if (!injectMode) return;
-    try {
-      const res = await fetch('http://127.0.0.1:8000/api/simulation/select_edge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lon, lat })
-      });
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.detail || 'Failed to select edge');
-      }
-      const data = await res.json();
-      setSelectedEdge(data);
-      setShowCongestionPanel(true);
-      setInjectMode(false);
-    } catch (e) {
-      alert(e.message || "Unable to select a road segment. Please try again.");
-    }
-  };
-
-  const handleInjectCongestion = async (intensity) => {
-    if (!selectedEdge) return;
-    try {
-      await fetch('http://127.0.0.1:8000/api/simulation/inject_congestion', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          u: selectedEdge.u, 
-          v: selectedEdge.v, 
-          intensity: intensity 
-        })
-      });
-      
-      alert("Congestion injected into selected road segment successfully.");
-      
-      // Clear panel state
-      setShowCongestionPanel(false);
-      setSelectedEdge(null);
-      
-      // Force simState refresh to instantly show new event
-      const stateRes = await fetch('http://127.0.0.1:8000/api/simulation/state');
-      const stateData = await stateRes.json();
-      setSimState(stateData);
-      
-      handleRecalculate();
-    } catch (e) {
-      console.error('Failed to inject congestion', e);
-      alert("Unable to inject congestion. Check that the backend is running.");
-    }
-  };
-
-  const handleCancelInjection = () => {
-    setShowCongestionPanel(false);
-    setSelectedEdge(null);
-  };
-
   return (
     <div style={{ display: 'flex', width: '100%', height: '100%' }}>
       <Sidebar 
@@ -153,51 +92,95 @@ function App() {
       <div style={{ flex: 1, position: 'relative' }}>
         <MapCanvas 
           routeData={routeData} 
-          injectMode={injectMode}
-          onMapClick={handleMapClick}
-          activeEvents={simState?.active_decay_events}
-          selectedEdge={selectedEdge}
+          activeCandidateId={selectedCandidate?.route_id}
+          onSelectCandidate={setSelectedCandidate}
+          verificationTarget={verificationTarget}
+          verificationAnchor={verificationAnchor}
         />
-        {routeData && (
+        
+        {/* Right Floating Drawer: Tab toggle between DARR and PCVC */}
+        <div style={{
+          position: 'absolute',
+          top: '24px',
+          right: '24px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px',
+          zIndex: 10,
+          maxHeight: 'calc(100vh - 48px)',
+          pointerEvents: 'none',
+          overflowY: 'auto'
+        }}>
+          {/* Top Segmented Controls */}
           <div style={{
-            position: 'absolute',
-            top: '24px',
-            right: '24px',
+            pointerEvents: 'auto',
             display: 'flex',
-            flexDirection: 'column',
-            gap: '16px',
-            zIndex: 10,
-            maxHeight: 'calc(100vh - 48px)',
-            pointerEvents: 'none',
-            overflowY: 'auto'
+            backgroundColor: 'rgba(255, 255, 255, 0.9)',
+            backdropFilter: 'blur(8px)',
+            borderRadius: '8px',
+            padding: '3px',
+            border: '1px solid var(--border-color)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+            width: '360px'
           }}>
-            <div style={{ pointerEvents: 'auto' }}>
-              <StatsOverlay 
-                stats={routeData.stats} 
-                profile={routeData.route.properties.profile} 
-                algorithm={routeData.algorithm}
-                routeStatus={routeData.route_status}
-              />
-            </div>
+            <button
+              onClick={() => setActiveTab('darr')}
+              style={{
+                flex: 1,
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: 'none',
+                fontSize: '0.6875rem',
+                fontWeight: activeTab === 'darr' ? '700' : '500',
+                backgroundColor: activeTab === 'darr' ? 'var(--accent-color)' : 'transparent',
+                color: activeTab === 'darr' ? '#ffffff' : 'var(--text-secondary)',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              Route Resilience (DARR)
+            </button>
+            <button
+              onClick={() => setActiveTab('pcvc')}
+              style={{
+                flex: 1,
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: 'none',
+                fontSize: '0.6875rem',
+                fontWeight: activeTab === 'pcvc' ? '700' : '500',
+                backgroundColor: activeTab === 'pcvc' ? '#059669' : 'transparent',
+                color: activeTab === 'pcvc' ? '#ffffff' : 'var(--text-secondary)',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              Verification (PCVC)
+            </button>
           </div>
-        )}
-        
-        <SimulationControls 
-          simState={simState} 
-          setSimState={setSimState} 
-          onRecalculate={handleRecalculate}
-          onInjectCongestion={setInjectMode}
-        />
-        
-        {simState && <SignalDecayMonitor activeEvents={simState.active_decay_events} />}
-        
-        {showCongestionPanel && (
-          <CongestionSelectionPanel 
-            selectedEdge={selectedEdge}
-            onCancel={handleCancelInjection}
-            onInject={handleInjectCongestion}
-          />
-        )}
+
+          <div style={{ pointerEvents: 'auto' }}>
+            {activeTab === 'darr' ? (
+              routeData ? (
+                <DARRDecisionPanel 
+                  routeData={routeData}
+                  selectedCandidate={selectedCandidate}
+                  onSelectCandidate={setSelectedCandidate}
+                  profile={lastRequest.current?.profile || routeData.route?.properties?.profile || 'general'}
+                />
+              ) : (
+                <div className="glass-panel" style={{ width: '360px', padding: '16px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                  Calculate a route from the left sidebar to view DARR resilience and alternative candidate corridors.
+                </div>
+              )
+            ) : (
+              <AccessibilityVerification 
+                onSelectTargetEdge={setVerificationTarget}
+                onSelectAnchor={setVerificationAnchor}
+              />
+            )}
+          </div>
+        </div>
         
         <MapLegend />
       </div>

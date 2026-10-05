@@ -8,6 +8,8 @@ const PROFILES = [
   { id: 'wheelchair', name: 'Wheelchair' },
 ];
 
+import WeatherPanel from './WeatherPanel';
+
 export default function Sidebar({ onCalculate, isLoading, error }) {
   const [profile, setProfile] = useState('general');
   const [originIdx, setOriginIdx] = useState(0);
@@ -62,6 +64,8 @@ export default function Sidebar({ onCalculate, isLoading, error }) {
           Intelligent pedestrian navigation adapted to accessibility needs.
         </p>
       </div>
+      
+      <WeatherPanel />
 
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
         <div>

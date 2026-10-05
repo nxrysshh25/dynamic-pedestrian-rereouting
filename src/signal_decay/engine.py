@@ -105,6 +105,26 @@ class SignalDecayEngine:
                 total += event.current_penalty
         return total
 
+    def predict_penalty_at(self, u, v, target_time: float) -> float:
+        """
+        Estimates the predicted decayed penalty D_e(target_time) at a future simulation time.
+        Does not mutate active event states.
+        """
+        if target_time <= self.last_update_time:
+            return self.get_penalty(u, v)
+            
+        total = 0.0
+        for event in self.events.values():
+            if event.is_active and event.edge == (u, v):
+                delta_t = target_time - event.last_update_time
+                if delta_t > 0:
+                    pred = event.current_penalty * math.exp(-event.lambda_rate * delta_t)
+                    if pred >= self.epsilon:
+                        total += pred
+                else:
+                    total += event.current_penalty
+        return total
+
     def get_active_events(self) -> List[dict]:
         """
         Exports state for the frontend visualization.

@@ -26,14 +26,14 @@ def load_weights_config():
 def load_datasets_config():
     if not os.path.exists(DATASETS_PATH):
         return {
-            "active": "melbourne",
+            "active": "vit_vellore",
             "datasets": {
-                "melbourne": {
-                    "name": "Melbourne CBD",
-                    "center": [144.965, -37.813],
-                    "zoom": 14.5,
-                    "default_origin": [144.9669, -37.8183],
-                    "default_destination": [144.9646, -37.8098]
+                "vit_vellore": {
+                    "name": "VIT Vellore Campus",
+                    "center": [79.155, 12.971],
+                    "zoom": 15.5,
+                    "default_origin": [79.1559, 12.9692],
+                    "default_destination": [79.1583, 12.9718]
                 }
             }
         }

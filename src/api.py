@@ -2,14 +2,22 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Any
+import os
+import json
 
 from src.graph_manager import load_or_build_graph
 from src.pada_r.router import compute_pada_route
 from src.config.loader import DATASETS_CONFIG
+from src.darr.router import compute_darr_routes
+from src.darr.resilience import resilience_engine
+from src.darr.collapse_predictor import collapse_predictor
+from src.darr.counterfactual import counterfactual_evaluator
+from src.weather.service import weather_service
+from src.pcvc import pcvc_controller, evidence_tracker, VerificationEventCreateRequest
+import time
 
-app = FastAPI(title="Accessibility-Aware Routing API")
+app = FastAPI(title="Dynamic Accessibility Resilience Routing (DARR) API")
 
-# Allow all origins for development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,7 +30,7 @@ G_base = None
 
 @app.get("/api/config")
 def get_config():
-    active_dataset = DATASETS_CONFIG.get("active", "melbourne")
+    active_dataset = DATASETS_CONFIG.get("active", "vit_vellore")
     return DATASETS_CONFIG.get("datasets", {}).get(active_dataset, {})
 
 @app.on_event("startup")
@@ -33,8 +41,8 @@ def startup_event():
     print("Graph initialized successfully.")
 
 class RouteRequest(BaseModel):
-    origin: List[float] # [lon, lat]
-    destination: List[float] # [lon, lat]
+    origin: List[float]
+    destination: List[float]
     profile: str = "general"
 
 @app.post("/api/route")
@@ -45,42 +53,25 @@ def get_route(request: RouteRequest):
     origin_tuple = (request.origin[0], request.origin[1])
     dest_tuple = (request.destination[0], request.destination[1])
     
-    # Pass simulation state to calculate_route
-    from src.simulation.controller import sim_controller
-    sim_state = sim_controller.get_state()
-    
     path, path_edges, route_status, route_explanation, stats = compute_pada_route(
-        G_base, origin_tuple, dest_tuple, request.profile, 
-        sim_date_str=sim_state['date'], 
-        sim_hour=sim_state['hour'],
-        active_route_path=sim_controller.active_route_path
+        G_base, origin_tuple, dest_tuple, request.profile
     )
     
     if not path or not path_edges:
         raise HTTPException(status_code=404, detail="No path found between these locations")
         
-    # Store the active route path for stability calculations
-    sim_controller.active_route_path = path
-    
-    # Collect coordinates to form a GeoJSON LineString
     route_coords = []
     restricted_segments = []
     
     for edge in path_edges:
         geom = edge.get('geometry')
         if geom is None or not hasattr(geom, 'coords'):
-            # Defensive fallback: this should not happen after graph_manager
-            # ensures geometry, but log and skip to avoid 500.
-            import logging
-            logging.getLogger(__name__).error(
-                f"Edge {edge.get('edge_id','?')} still missing Shapely geometry at route-build time."
-            )
             continue
         coords = list(geom.coords)
         route_coords.extend(coords)
         
         is_restricted = edge.get('stairs', False) or edge.get('wheelchair_accessible') is False
-        if is_restricted or edge.get('cost', 0) > edge.get('length', edge.get('length_m', 0)) * 2: # Highlight high cost edges too
+        if is_restricted or edge.get('cost', 0) > edge.get('length', edge.get('length_m', 0)) * 2:
             restricted_segments.append({
                 "type": "Feature",
                 "geometry": {
@@ -107,8 +98,22 @@ def get_route(request: RouteRequest):
         }
     }
     
+    try:
+        darr_res = compute_darr_routes(G_base, origin_tuple, dest_tuple, request.profile)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"DARR candidate computation fallback: {e}")
+        darr_res = {
+            "status": "FALLBACK",
+            "candidate_routes": [],
+            "selected_route": None,
+            "network_resilience": None,
+            "collapse_risk": None,
+            "decision_summary": "PADA-R single-route baseline active."
+        }
+
     return {
-        "algorithm": "PADA-R",
+        "algorithm": "DARR (Dynamic Accessibility Resilience Routing)",
         "route_status": route_status,
         "route_explanation": route_explanation,
         "route": geojson_route,
@@ -116,170 +121,60 @@ def get_route(request: RouteRequest):
             "type": "FeatureCollection",
             "features": restricted_segments
         },
-        "stats": stats
+        "stats": stats,
+        "candidate_routes": darr_res.get("candidate_routes", []),
+        "selected_candidate": darr_res.get("selected_route"),
+        "network_resilience": darr_res.get("network_resilience"),
+        "collapse_risk": darr_res.get("collapse_risk"),
+        "decision_summary": darr_res.get("decision_summary", "")
     }
 
-class SimStepRequest(BaseModel):
-    delta_seconds: float
-
-@app.get("/api/simulation/state")
-def get_sim_state():
-    from src.simulation.controller import sim_controller
-    state = sim_controller.get_state()
-    if G_base is not None and 'active_decay_events' in state:
-        for evt in state['active_decay_events']:
-            u, v = evt['edge']
-            if G_base.has_node(u) and G_base.has_node(v):
-                evt['coordinates'] = [
-                    [G_base.nodes[u]['x'], G_base.nodes[u]['y']],
-                    [G_base.nodes[v]['x'], G_base.nodes[v]['y']]
-                ]
-    return state
-
-@app.post("/api/simulation/step")
-def step_simulation(req: SimStepRequest):
-    from src.simulation.controller import sim_controller
-    sim_controller.step(req.delta_seconds)
-    return sim_controller.get_state()
-
-@app.post("/api/simulation/reset")
-def reset_simulation():
-    from src.simulation.controller import sim_controller
-    sim_controller.reset()
-    return sim_controller.get_state()
-
-class SelectEdgeRequest(BaseModel):
-    lon: float
-    lat: float
-
-@app.post("/api/simulation/select_edge")
-def select_edge(req: SelectEdgeRequest):
-    from src.routing import get_nearest_edge
-    if G_base is None:
-        raise HTTPException(status_code=503, detail="Graph not loaded")
-        
-    u, v, geometry, dist = get_nearest_edge(G_base, (req.lon, req.lat))
-    if u is None:
-        raise HTTPException(status_code=404, detail="Could not identify a pedestrian road segment here.")
-        
-    return {
-        "u": u,
-        "v": v,
-        "geometry": geometry,
-        "distance": dist
-    }
-
-class InjectCongestionRequest(BaseModel):
-    u: Any
-    v: Any
-    intensity: str = "HIGH"
-
-@app.post("/api/simulation/inject_congestion")
-def inject_congestion(req: InjectCongestionRequest):
-    from src.signal_decay.engine import decay_engine
-    if G_base is None:
-        raise HTTPException(status_code=503, detail="Graph not loaded")
-        
-    u_tuple = req.u
-    v_tuple = req.v
-    
-    if not G_base.has_edge(u_tuple, v_tuple) and not G_base.has_edge(v_tuple, u_tuple):
-        raise HTTPException(status_code=400, detail="Invalid edge provided")
-        
-    penalty_map = {
-        "LOW": 50.0,
-        "MEDIUM": 100.0,
-        "HIGH": 200.0
-    }
-    applied_penalty = penalty_map.get(req.intensity.upper(), 200.0)
-        
-    # Inject penalty to the specific edge
-    eid = decay_engine.add_penalty(u_tuple, v_tuple, penalty_value=applied_penalty, event_type=req.intensity.upper())
-        
-    return {"status": "success", "event_id": eid, "edge": [u_tuple, v_tuple]}
-
-@app.get("/api/sensors")
-def get_sensors():
-    import os
-    import pandas as pd
-    active_dataset = DATASETS_CONFIG.get("active", "melbourne")
-    if active_dataset != "melbourne":
-        return []
-    sensors_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "raw", "pedestrian_sensors", "sensor_locations.csv")
-    if not os.path.exists(sensors_path):
-        return []
-    df = pd.read_csv(sensors_path)
-    return df[['location_id', 'sensor_name', 'latitude', 'longitude']].to_dict(orient='records')
-
-@app.get("/api/signals")
-def get_signals():
-    import os
-    import pandas as pd
-    active_dataset = DATASETS_CONFIG.get("active", "melbourne")
-    if active_dataset != "melbourne":
-        return []
-    signals_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "raw", "traffic_signals", "victorian_traffic_signals.csv")
-    if not os.path.exists(signals_path):
-        return []
-    df = pd.read_csv(signals_path)
-    return df[['SITE_NO', 'SITE_NAME', 'LATITUDE', 'LONGITUDE']].to_dict(orient='records')
+@app.get("/api/weather")
+def get_weather():
+    return weather_service.get_current_weather()
 
 @app.get("/api/landmarks")
 def get_landmarks():
     import os
     import json
-    import geopandas as gpd
-    active_dataset = DATASETS_CONFIG.get("active", "melbourne")
-    if active_dataset == "melbourne":
-        return [
-            {"name": "Flinders Street Station", "coords": [144.9669, -37.8183]},
-            {"name": "State Library", "coords": [144.9646, -37.8098]},
-            {"name": "Parliament House", "coords": [144.9740, -37.8115]},
-            {"name": "Flagstaff Gardens", "coords": [144.9555, -37.8105]},
-        ]
-    elif active_dataset == "vit_vellore":
-        processed_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "vit_vellore", "processed")
-        path = os.path.join(processed_dir, "vit_manual_locations.json")
-        results = []
-        if os.path.exists(path):
-            with open(path, 'r') as f:
-                data = json.load(f)
-                for loc in data.get('locations', []):
-                    results.append({
-                        "name": loc['name'],
-                        "coords": [loc['longitude'], loc['latitude']]
-                    })
-        return results
-    return []
+    processed_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "vit_vellore", "processed")
+    path = os.path.join(processed_dir, "vit_manual_locations.json")
+    results = []
+    if os.path.exists(path):
+        with open(path, 'r') as f:
+            data = json.load(f)
+            for loc in data.get('locations', []):
+                results.append({
+                    "name": loc['name'],
+                    "coords": [loc['longitude'], loc['latitude']]
+                })
+    return results
 
 @app.get("/api/academic_blocks")
 def get_academic_blocks():
     import os
     import json
-    active_dataset = DATASETS_CONFIG.get("active", "melbourne")
-    if active_dataset == "vit_vellore":
-        processed_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "vit_vellore", "processed")
-        path = os.path.join(processed_dir, "vit_manual_locations.json")
-        if os.path.exists(path):
-            with open(path, 'r') as f:
-                data = json.load(f)
-            features = []
-            for loc in data.get('locations', []):
-                # Return only academic blocks for the specific visual layer
-                if loc.get('type') == 'academic_block':
-                    features.append({
-                        "type": "Feature",
-                        "geometry": {
-                            "type": "Point",
-                            "coordinates": [loc['longitude'], loc['latitude']]
-                        },
-                        "properties": {
-                            "name": loc['name'],
-                            "short_name": loc['short_name'],
-                            "id": loc['id']
-                        }
-                    })
-            return {"type": "FeatureCollection", "features": features}
+    processed_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "vit_vellore", "processed")
+    path = os.path.join(processed_dir, "vit_manual_locations.json")
+    if os.path.exists(path):
+        with open(path, 'r') as f:
+            data = json.load(f)
+        features = []
+        for loc in data.get('locations', []):
+            if loc.get('type') == 'academic_block':
+                features.append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [loc['longitude'], loc['latitude']]
+                    },
+                    "properties": {
+                        "name": loc['name'],
+                        "short_name": loc['short_name'],
+                        "id": loc['id']
+                    }
+                })
+        return {"type": "FeatureCollection", "features": features}
     return {"type": "FeatureCollection", "features": []}
 
 @app.get("/api/pedestrian_network/stats")
@@ -292,12 +187,14 @@ def get_pedestrian_network_stats():
     crossings = 0
     barriers = 0
     slopes = 0
+    subways = 0
     
     for u, v, d in G_base.edges(data=True):
         if d.get("stairs"): stairs += 1
         if d.get("ramp"): ramps += 1
         if d.get("crossing") and d.get("crossing") != "no": crossings += 1
         if d.get("barrier") and d.get("barrier") != "no": barriers += 1
+        if d.get("subway"): subways += 1
         
         status = d.get("slope_status")
         percent = d.get("slope_percent")
@@ -311,7 +208,8 @@ def get_pedestrian_network_stats():
         "ramps": ramps,
         "crossings": crossings,
         "barriers": barriers,
-        "slopes": slopes
+        "slopes": slopes,
+        "subways": subways
     }
 
 @app.get("/api/pedestrian_network")
@@ -348,7 +246,6 @@ def get_pedestrian_network():
             else:
                 props['display_name'] = None
                 
-        # Only keep useful properties to save bandwidth
         clean_props = {
             "edge_id": props.get("edge_id"),
             "name": props.get("name"),
@@ -359,7 +256,8 @@ def get_pedestrian_network():
             "slope_percent": props.get("slope_percent"),
             "slope_status": props.get("slope_status"),
             "barrier": props.get("barrier"),
-            "crossing": props.get("crossing")
+            "crossing": props.get("crossing"),
+            "subway": props.get("subway", False)
         }
                 
         features.append({
@@ -372,3 +270,149 @@ def get_pedestrian_network():
         })
         
     return {"type": "FeatureCollection", "features": features}
+
+@app.post("/api/routes/candidates")
+def get_candidate_routes(request: RouteRequest):
+    if G_base is None:
+        raise HTTPException(status_code=503, detail="Graph not loaded yet")
+        
+    origin_tuple = (request.origin[0], request.origin[1])
+    dest_tuple = (request.destination[0], request.destination[1])
+    
+    result = compute_darr_routes(G_base, origin_tuple, dest_tuple, request.profile)
+    if result["status"] == "NO_PATH_FOUND":
+        raise HTTPException(status_code=404, detail=result["message"])
+    elif result["status"] == "NO_NODES_FOUND":
+        raise HTTPException(status_code=400, detail=result["message"])
+        
+    return result
+
+@app.get("/api/accessibility/resilience")
+def get_accessibility_resilience(
+    origin_lon: float = 79.155836,
+    origin_lat: float = 12.969035,
+    dest_lon: float = 79.159534,
+    dest_lat: float = 12.970823,
+    profile: str = "wheelchair"
+):
+    if G_base is None:
+        raise HTTPException(status_code=503, detail="Graph not loaded")
+        
+    from src.routing import get_nearest_node
+    from src.darr.subgraph import subgraph_manager
+    u = get_nearest_node(G_base, (origin_lon, origin_lat))
+    v = get_nearest_node(G_base, (dest_lon, dest_lat))
+    
+    G_sub = subgraph_manager.get_accessible_subgraph(G_base, profile)
+    aoc = resilience_engine.calculate_aoc(G_sub, u, v)
+    arl = resilience_engine.calculate_arl(G_sub, u, v)
+    
+    return {
+        "profile": profile,
+        "origin_node": u,
+        "destination_node": v,
+        "aoc": aoc,
+        "arl": arl
+    }
+
+@app.get("/api/accessibility/collapse-risk")
+def get_accessibility_collapse_risk(
+    origin_lon: float = 79.155836,
+    origin_lat: float = 12.969035,
+    dest_lon: float = 79.159534,
+    dest_lat: float = 12.970823,
+    forecast_seconds: float = 300.0
+):
+    if G_base is None:
+        raise HTTPException(status_code=503, detail="Graph not loaded")
+        
+    from src.routing import get_nearest_node
+    u = get_nearest_node(G_base, (origin_lon, origin_lat))
+    v = get_nearest_node(G_base, (dest_lon, dest_lat))
+    
+    return collapse_predictor.evaluate_all_profiles(G_base, u, v, forecast_seconds)
+
+@app.get("/api/accessibility/critical-edges")
+def get_critical_edges(profile: str = "wheelchair", threshold: float = 0.4):
+    if G_base is None:
+        raise HTTPException(status_code=503, detail="Graph not loaded")
+        
+    edges = resilience_engine.identify_critical_edges(G_base, profile, threshold)
+    features = []
+    for e in edges:
+        if e.get("coordinates"):
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": e["coordinates"]
+                },
+                "properties": {
+                    "u": e["u"],
+                    "v": e["v"],
+                    "name": e["name"],
+                    "cad": e["cad"],
+                    "differential_cad": e["differential_cad"],
+                    "is_cut_edge": e["is_cut_edge"]
+                }
+            })
+    return {"type": "FeatureCollection", "features": features}
+
+class SimulateAssignmentRequest(BaseModel):
+    candidate_path: List[Any]
+    target_profile: str = "wheelchair"
+    simulated_load: Optional[int] = 25
+
+@app.post("/api/routing/simulate-assignment")
+def simulate_assignment(req: SimulateAssignmentRequest):
+    if G_base is None:
+        raise HTTPException(status_code=503, detail="Graph not loaded")
+        
+    if not req.candidate_path or len(req.candidate_path) < 2:
+        raise HTTPException(status_code=400, detail="candidate_path must contain at least 2 nodes")
+        
+    return counterfactual_evaluator.simulate_assignment(
+        G_base, req.candidate_path, req.target_profile, simulated_load=req.simulated_load
+    )
+
+# ============================================================================
+# PCVC (Profile-Coupled Counterfactual Verification Controller) Endpoints
+# ============================================================================
+
+@app.get("/api/accessibility/verification-target")
+def get_verification_target(profile: str = "wheelchair", top_k: int = 5):
+    """
+    PCVC Closed-Loop Target Identification:
+    Finds uncertain edges for the target profile, runs counterfactual resilience analysis,
+    ranks by verification priority, and performs safe-return probe selection.
+    """
+    if G_base is None:
+        raise HTTPException(status_code=503, detail="Graph not loaded yet")
+    try:
+        plan = pcvc_controller.compute_verification_targets(G_base, target_profile=profile, top_k=top_k)
+        return plan.dict()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"PCVC execution failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"PCVC calculation failed: {str(e)}")
+
+@app.post("/api/accessibility/verification-event")
+def create_verification_event(req: VerificationEventCreateRequest):
+    """
+    Creates/logs a verification task event in PENDING state.
+    Provides the integration handoff for future ESP32 + MPU6050 physical traversal evidence.
+    """
+    event = evidence_tracker.create_verification_event(
+        edge_id=req.edge_id,
+        target_profile=req.target_profile,
+        probe_profile=req.probe_profile,
+        anchor_node=req.anchor_node,
+        notes=req.notes
+    )
+    return event.dict()
+
+@app.get("/api/accessibility/verification-events")
+def list_verification_events(limit: int = 50):
+    """Lists recent verification task events."""
+    events = evidence_tracker.list_events(limit=limit)
+    return [e.dict() for e in events]

@@ -10,18 +10,21 @@ def audit_graph():
     G = load_or_build_graph()
     
     attrs = {
-        'has_stairs': Counter(),
-        'wheelchair_accessible': Counter(),
-        'incline_value': Counter(),
-        'surface_type': Counter(),
-        'smoothness_value': Counter(),
-        'tactile_paving': Counter()
+        'stairs': Counter(),
+        'ramp': Counter(),
+        'crossing': Counter(),
+        'barrier': Counter(),
+        'slope_percent': Counter(),
+        'slope_status': Counter(),
+        'subway': Counter(),
+        'highway': Counter(),
+        'surface': Counter()
     }
     
     lengths = []
     
     for u, v, data in G.edges(data=True):
-        lengths.append(data.get('length', 0))
+        lengths.append(data.get('length', data.get('length_m', 0)))
         for key in attrs.keys():
             val = data.get(key)
             if hasattr(val, 'iloc'): # Pandas series
@@ -29,6 +32,7 @@ def audit_graph():
             val = str(val)
             attrs[key][val] += 1
             
+    print(f"Total Nodes: {G.number_of_nodes()}")
     print(f"Total Edges: {G.number_of_edges()}")
     print(f"Min Length: {min(lengths):.2f}, Max Length: {max(lengths):.2f}, Avg Length: {sum(lengths)/len(lengths):.2f}")
     

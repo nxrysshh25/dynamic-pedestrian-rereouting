@@ -6,7 +6,8 @@ export default function MapLegend() {
     ramps: 0,
     slopes: 0,
     crossings: 0,
-    barriers: 0
+    barriers: 0,
+    subways: 0
   });
 
   useEffect(() => {
@@ -23,6 +24,7 @@ export default function MapLegend() {
     { label: 'CROSSING', icon: '🚸', color: '#1d4ed8', type: 'line', dashArray: '4,4', count: stats.crossings },
     { label: 'BARRIER', icon: '🚧', color: '#b91c1c', type: 'line', count: stats.barriers },
     { label: 'RAMP', icon: '♿', color: '#047857', type: 'line', count: stats.ramps },
+    { label: 'PEDESTRIAN SUBWAY', icon: '🚇', color: '#06b6d4', type: 'line', dashArray: '1,2', count: stats.subways },
     { label: 'CONGESTION', icon: '🚨', color: '#dc2626', type: 'line', count: null },
     { label: 'RESTRICTED PATH', icon: '⛔', color: '#d1d5db', type: 'line', dashArray: '4,4', count: null },
   ];

@@ -44,19 +44,21 @@ def parse_osm_xml(osm_file):
         nodes[nid] = (lon, lat)
         
     ways = {}
+    way_tags = {}
     for way in root.findall('way'):
         wid = int(way.get('id'))
         nd_refs = [int(nd.get('ref')) for nd in way.findall('nd')]
         ways[wid] = nd_refs
+        way_tags[wid] = {t.get('k'): t.get('v') for t in way.findall('tag')}
         
     print(f"Parsed {len(nodes)} nodes and {len(ways)} ways.")
-    return nodes, ways
+    return nodes, ways, way_tags
 
 def build_dataset():
     os.makedirs(OUT_DIR, exist_ok=True)
     os.makedirs(VAL_DIR, exist_ok=True)
     
-    nodes, ways = parse_osm_xml(MAP_OSM_PATH)
+    nodes, ways, way_tags = parse_osm_xml(MAP_OSM_PATH)
     df = pd.read_csv(RAW_CSV_PATH)
     
     G = nx.MultiGraph()
@@ -147,12 +149,13 @@ def build_dataset():
             'traffic': str(row['traffic_level']) if pd.notna(row.get('traffic_level')) else 'unknown',
             'restricted': False,
             'source': 'osm',
-            'confidence': 'high'
+            'confidence': 'high',
+            'subway': (str(row['way_id']) == '1259738117' or way_tags.get(wid, {}).get('tunnel') == 'yes' or 'subway' in way_tags.get(wid, {}).get('name', '').lower())
         }
         
         hw = edge_data['highway']
-        if hw in ['footway', 'pedestrian', 'path', 'steps']:
-            edge_data['routing_class'] = hw
+        if hw in ['footway', 'pedestrian', 'path', 'steps'] or edge_data['subway']:
+            edge_data['routing_class'] = hw if not edge_data['subway'] else 'footway'
         elif hw in ['service', 'residential', 'unclassified', 'track']:
             edge_data['routing_class'] = 'conditional'
         elif hw in ['primary', 'secondary', 'tertiary']:
@@ -161,6 +164,9 @@ def build_dataset():
         if edge_data['stairs']:
             edge_data['path_type'] = 'stairs'
             edge_data['accessible'] = False
+        elif edge_data['subway']:
+            edge_data['path_type'] = 'subway'
+            edge_data['accessible'] = True
         else:
             edge_data['path_type'] = hw
             edge_data['accessible'] = True
@@ -174,6 +180,21 @@ def build_dataset():
                 
         if u in G.nodes and v in G.nodes:
             G.add_edge(u, v, key=edge_data['edge_id'], **edge_data)
+            
+            # ROAD + PEDESTRIAN PATH verified duplication
+            tags = way_tags.get(wid, {})
+            has_sidewalk = (
+                tags.get('sidewalk') in ['both', 'left', 'right', 'separate', 'yes'] or
+                tags.get('sidewalk:left') in ['separate', 'yes'] or
+                tags.get('sidewalk:right') in ['separate', 'yes']
+            )
+            if has_sidewalk and hw not in ['footway', 'pedestrian', 'path', 'steps']:
+                ped_edge = edge_data.copy()
+                ped_edge['edge_id'] = edge_data['edge_id'] + '_ped'
+                ped_edge['highway'] = 'footway'
+                ped_edge['routing_class'] = 'footway'
+                ped_edge['path_type'] = 'footway'
+                G.add_edge(u, v, key=ped_edge['edge_id'], **ped_edge)
 
     print(f"Graph constructed: {len(G.nodes)} nodes, {len(G.edges)} edges")
     
@@ -328,6 +349,7 @@ def build_dataset():
     slopes_features = []
     barriers_features = []
     highway_features = []
+    subways_features = []
     
     for u, v, k, data in G.edges(keys=True, data=True):
         geom = data['geometry']
@@ -356,6 +378,8 @@ def build_dataset():
             barriers_features.append(feature)
         if data.get('highway'):
             highway_features.append(feature)
+        if data.get('subway'):
+            subways_features.append(feature)
             
     export_geojson(edge_features, OUT_DIR / 'pedestrian_edges.geojson')
     export_geojson(stairs_features, OUT_DIR / 'stairs.geojson')
@@ -364,6 +388,7 @@ def build_dataset():
     export_geojson(slopes_features, OUT_DIR / 'slopes.geojson')
     export_geojson(barriers_features, OUT_DIR / 'barriers.geojson')
     export_geojson(highway_features, OUT_DIR / 'highway_types.geojson')
+    export_geojson(subways_features, OUT_DIR / 'subways.geojson')
     
     with open(OUT_DIR / 'vit_manual_locations.json', 'w') as f:
         json.dump(manual_locs, f, indent=4)

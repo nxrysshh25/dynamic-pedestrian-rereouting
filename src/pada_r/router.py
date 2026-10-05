@@ -4,7 +4,7 @@ from src.routing import get_nearest_node
 from src.pada_r.profiles import PADA_PROFILES
 from src.pada_r.cost_model import calculate_pada_cost
 
-def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_hour, active_route_path=None):
+def compute_pada_route(G, origin, destination, profile_name, active_route_path=None):
     """
     Executes the PADA-R search and stability check.
     Returns (path, path_edges, route_status, route_explanation, stats)
@@ -29,7 +29,7 @@ def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_h
             best_res = None
             for key, edge_attrs in data.items():
                 status, total_cost, breakdown, explanation = calculate_pada_cost(
-                    u, v, edge_attrs, profile_name, sim_date_str, sim_hour
+                    u, v, edge_attrs, profile_name
                 )
                 if status != 'INACCESSIBLE' and total_cost < min_cost:
                     min_cost = total_cost
@@ -43,7 +43,7 @@ def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_h
             return min_cost
         else:
             status, total_cost, breakdown, explanation = calculate_pada_cost(
-                u, v, data, profile_name, sim_date_str, sim_hour
+                u, v, data, profile_name
             )
             if status == 'INACCESSIBLE':
                 return float('inf')
@@ -60,6 +60,8 @@ def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_h
     candidate_cost = 0.0
     for i in range(len(candidate_path) - 1):
         u, v = candidate_path[i], candidate_path[i+1]
+        if (u, v) not in edge_cache:
+            return None, None, "NO_PATH_FOUND", ["No physically accessible path exists."], None
         _, best_res = edge_cache[(u, v)]
         candidate_cost += best_res[1]
         
@@ -84,7 +86,7 @@ def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_h
                 best_res = None
                 for key, edge_attrs in data.items():
                     s, c, b, e = calculate_pada_cost(
-                        u, v, edge_attrs, profile_name, sim_date_str, sim_hour
+                        u, v, edge_attrs, profile_name
                     )
                     if s != 'INACCESSIBLE' and c < min_cost:
                         min_cost = c
@@ -96,7 +98,7 @@ def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_h
                 status, cost, breakdown, explanation = best_res
             else:
                 status, cost, breakdown, explanation = calculate_pada_cost(
-                    u, v, data, profile_name, sim_date_str, sim_hour
+                    u, v, data, profile_name
                 )
             
             
@@ -126,10 +128,14 @@ def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_h
     total_cong = 0.0
     total_sig = 0.0
     total_decay = 0.0
+    total_weather = 0.0
+    total_waterlogging = 0.0
     
     has_congestion = False
     has_decay = False
     has_warning = False
+    has_weather_impact = False
+    has_waterlogging_impact = False
     
     for i in range(len(final_path) - 1):
         u, v = final_path[i], final_path[i+1]
@@ -149,7 +155,7 @@ def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_h
                 chosen_key = None
                 for key, edge_attrs in raw.items():
                     s, c, b, e = calculate_pada_cost(
-                        u, v, edge_attrs, profile_name, sim_date_str, sim_hour
+                        u, v, edge_attrs, profile_name
                     )
                     if s != 'INACCESSIBLE' and c < min_cost:
                         min_cost = c
@@ -158,14 +164,14 @@ def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_h
                 if best_res is None:
                     # Defensive fallback
                     chosen_key = list(raw.keys())[0]
-                    best_res = calculate_pada_cost(u, v, raw[chosen_key], profile_name, sim_date_str, sim_hour)
+                    best_res = calculate_pada_cost(u, v, raw[chosen_key], profile_name)
                 
                 edge_data = raw[chosen_key].copy()
                 status, cost, breakdown, explanation = best_res
         else:
             edge_data = raw.copy()
             status, cost, breakdown, explanation = calculate_pada_cost(
-                u, v, edge_data, profile_name, sim_date_str, sim_hour
+                u, v, edge_data, profile_name
             )
         
         if breakdown is None:
@@ -173,7 +179,7 @@ def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_h
             breakdown = {
                 'distance': edge_data.get('length', edge_data.get('length_m', 0)),
                 'accessibility': 0, 'effort': 0, 'safety': 0,
-                'congestion': 0, 'signal': 0, 'decay': 0
+                'congestion': 0, 'signal': 0, 'decay': 0, 'weather': 0, 'waterlogging': 0
             }
         
         edge_data['cost'] = cost
@@ -181,17 +187,21 @@ def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_h
         path_edges.append(edge_data)
         
         total_cost += cost
-        total_dist += breakdown['distance']
+        total_dist += breakdown.get('distance', 0)
         total_physical_dist += edge_data.get('length', edge_data.get('length_m', 0))
-        total_acc += breakdown['accessibility']
-        total_eff += breakdown['effort']
-        total_saf += breakdown['safety']
-        total_cong += breakdown['congestion']
-        total_sig += breakdown['signal']
-        total_decay += breakdown['decay']
+        total_acc += breakdown.get('accessibility', 0)
+        total_eff += breakdown.get('effort', 0)
+        total_saf += breakdown.get('safety', 0)
+        total_cong += breakdown.get('congestion', 0)
+        total_sig += breakdown.get('signal', 0)
+        total_decay += breakdown.get('decay', 0)
+        total_weather += breakdown.get('weather', 0)
+        total_waterlogging += breakdown.get('waterlogging', 0)
         
-        if breakdown['congestion'] > 0: has_congestion = True
-        if breakdown['decay'] > 0: has_decay = True
+        if breakdown.get('congestion', 0) > 0: has_congestion = True
+        if breakdown.get('decay', 0) > 0: has_decay = True
+        if breakdown.get('weather', 0) > 0: has_weather_impact = True
+        if breakdown.get('waterlogging', 0) > 0: has_waterlogging_impact = True
         if status == 'WARNING': has_warning = True
         
     if has_warning:
@@ -200,6 +210,11 @@ def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_h
         route_explanation.append("Selected because the active signal-decay penalty increased the cost of alternative segments.")
     elif has_congestion:
         route_explanation.append("Selected because alternative routes currently have high congestion.")
+        
+    if has_weather_impact:
+        route_explanation.append("Weather conditions (e.g. rain/heat) impacted route choice based on profile sensitivity.")
+    if has_waterlogging_impact:
+        route_explanation.append("Selected route avoids highly dangerous waterlogged sectors or absorbed acceptable waterlogging penalty.")
         
     stats = {
         'distance': total_physical_dist,
@@ -212,6 +227,8 @@ def compute_pada_route(G, origin, destination, profile_name, sim_date_str, sim_h
             'congestion': total_cong,
             'signal': total_sig,
             'decay': total_decay,
+            'weather': total_weather,
+            'waterlogging': total_waterlogging,
             'stability': 0.0 # Just for visual completeness
         }
     }

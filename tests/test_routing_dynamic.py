@@ -27,8 +27,6 @@ def test_general_profile_routing(mock_graph):
         (0, 0), 
         (1, 1), 
         "general", 
-        "2023-10-01", 
-        12, 
         active_route_path=None
     )
     
@@ -43,8 +41,6 @@ def test_wheelchair_profile_routing(mock_graph):
         (0, 0), 
         (1, 1), 
         "wheelchair", 
-        "2023-10-01", 
-        12, 
         active_route_path=None
     )
     
@@ -69,12 +65,12 @@ def test_route_stability(mock_graph):
     G.add_edge(3, 4, length=100)
     
     # Normally, 1->2->4 is chosen
-    route, _, _, _, _ = compute_pada_route(G, (0, 0), (1, 1), "general", "2023-10-01", 12, active_route_path=None)
+    route, _, _, _, _ = compute_pada_route(G, (0, 0), (1, 1), "general", active_route_path=None)
     assert route == [1, 2, 4]
     
     # If we are already on 1->3->4, and 1->2->4 is only 5 units better,
     # stability_threshold is 15.0 for General, so it should retain 1->3->4
-    route, edges, route_status, explanation, stats = compute_pada_route(G, (0, 0), (1, 1), "general", "2023-10-01", 12, active_route_path=[1, 3, 4])
+    route, edges, route_status, explanation, stats = compute_pada_route(G, (0, 0), (1, 1), "general", active_route_path=[1, 3, 4])
     
     # Path should remain 1->3->4
     assert route == [1, 3, 4]
@@ -82,7 +78,7 @@ def test_route_stability(mock_graph):
 
     # But if 1->3 becomes 30 units more expensive (e.g. length=130), it should switch to 1->2->4
     G[1][3]['length'] = 130
-    route, edges, route_status, explanation, stats = compute_pada_route(G, (0, 0), (1, 1), "general", "2023-10-01", 12, active_route_path=[1, 3, 4])
+    route, edges, route_status, explanation, stats = compute_pada_route(G, (0, 0), (1, 1), "general", active_route_path=[1, 3, 4])
     
     assert route == [1, 2, 4]
     assert route_status != "STABLE_RETAINED"

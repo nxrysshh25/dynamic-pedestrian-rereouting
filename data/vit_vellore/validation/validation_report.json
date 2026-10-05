@@ -8,12 +8,12 @@
     },
     "PROCESSED DATA": {
         "nodes": 1551,
-        "edges": 1697,
+        "edges": 1721,
         "geometry_from_osm": 1683,
         "geometry_fallback": 14,
         "missing_geometry": 0,
         "known_slopes": 0,
-        "unknown_slopes": 1697,
+        "unknown_slopes": 1721,
         "connected_components": 9,
         "academic_blocks": 7,
         "landmarks": 2
