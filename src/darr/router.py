@@ -4,8 +4,6 @@ from typing import Dict, Any, List, Tuple, Optional
 from src.routing import get_nearest_node
 from src.darr.candidate_generator import route_generator
 from src.darr.scorer import route_scorer
-from src.darr.resilience import resilience_engine
-from src.darr.collapse_predictor import collapse_predictor
 from src.darr.subgraph import subgraph_manager
 
 def compute_darr_routes(
@@ -56,16 +54,7 @@ def compute_darr_routes(
     # 2. Score and select best route
     selected, scored_candidates = route_scorer.select_best_route(candidates, profile_name)
 
-    # 3. Overall network resilience & collapse forecasting
-    G_sub = subgraph_manager.get_accessible_subgraph(G_base, profile_name)
-    all_paths = [c["path_nodes"] for c in scored_candidates]
-    aoc = resilience_engine.calculate_aoc(G_sub, orig_node, dest_node)
-    arl = resilience_engine.calculate_arl(G_sub, orig_node, dest_node, all_paths)
-    bottlenecks = resilience_engine.find_shared_bottlenecks(G_sub, all_paths)
-
-    collapse_status = collapse_predictor.predict_resilience(
-        G_base, orig_node, dest_node, profile_name
-    )
+    # 3. Overall network resilience & collapse forecasting (Removed)
 
     decision_summary = selected["reason"] if selected else "No route selected"
 
@@ -75,13 +64,7 @@ def compute_darr_routes(
         "profile": profile_name,
         "selected_route": selected,
         "candidate_routes": scored_candidates,
-        "network_resilience": {
-            "aoc": aoc,
-            "arl": arl,
-            "shared_edges_count": len(bottlenecks["shared_edges"]),
-            "shared_nodes_count": len(bottlenecks["shared_nodes"]),
-            "is_single_corridor": bottlenecks["is_single_corridor"]
-        },
-        "collapse_risk": collapse_status,
+        "network_resilience": None,
+        "collapse_risk": None,
         "decision_summary": decision_summary
     }

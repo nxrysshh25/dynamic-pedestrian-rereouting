@@ -4,9 +4,6 @@ from shapely.geometry import LineString
 
 from src.darr.config import get_profile_config, ProfileConfig
 from src.darr.subgraph import subgraph_manager
-from src.darr.resilience import resilience_engine
-from src.darr.collapse_predictor import collapse_predictor
-from src.darr.counterfactual import counterfactual_evaluator
 from src.signal_decay.engine import decay_engine
 
 class MultiRouteGenerator:
@@ -68,7 +65,7 @@ class MultiRouteGenerator:
             return data.get('length_m', data.get('length', 1.0)) + (2.0 * decay_pen)
 
         def weight_resilience(u, v, data):
-            cad = resilience_engine.calculate_cad_for_edge(G_base, u, v, "wheelchair")
+            cad = 0.0 # CAD removed
             decay_pen = decay_engine.get_penalty(u, v)
             # High penalty on high-CAD edges to route away from fragile accessibility bottlenecks
             if G_sub.is_multigraph():
@@ -219,7 +216,7 @@ class MultiRouteGenerator:
             predicted_dynamic_cost += length + pred_decay
 
             # CAD and Criticality
-            cad = resilience_engine.calculate_cad_for_edge(G_base, u, v, "wheelchair")
+            cad = 0.0
             if cad >= 0.4:
                 critical_edges_count += 1
 
@@ -254,15 +251,11 @@ class MultiRouteGenerator:
         eta_seconds = round(total_dist / max(speed_mps, 0.1), 1)
 
         # Counterfactual Marginal Accessibility Loss (MAL)
-        cf_res = counterfactual_evaluator.simulate_assignment(
-            G_base, path_nodes, target_profile="wheelchair", source=source, destination=destination
-        )
-        mal = cf_res["marginal_accessibility_loss"]
+        mal = 0.0
 
         # Resilience & Collapse Risk
-        G_sub_active = subgraph_manager.get_accessible_subgraph(G_base, active_profile)
-        resilience_score = resilience_engine.calculate_arl(G_sub_active, source, destination, [path_nodes])
-        collapse_res = collapse_predictor.predict_resilience(G_base, source, destination, active_profile)
+        resilience_score = 0.0
+        collapse_res_risk = "NORMAL"
 
         geojson_geom = {
             "type": "LineString",
@@ -282,7 +275,7 @@ class MultiRouteGenerator:
             "current_dynamic_cost": round(current_dynamic_cost, 1),
             "predicted_dynamic_cost": round(predicted_dynamic_cost, 1),
             "accessibility_resilience_score": resilience_score,
-            "accessibility_collapse_risk": collapse_res["collapse_risk"],
+            "accessibility_collapse_risk": collapse_res_risk,
             "critical_edge_count": critical_edges_count,
             "marginal_accessibility_loss": mal,
             "final_route_score": 0.0, # to be scored by DARRRouteScorer

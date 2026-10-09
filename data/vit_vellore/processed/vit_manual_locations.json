@@ -56,8 +56,8 @@
             "latitude": 12.971264636436771,
             "longitude": 79.16640540870385,
             "source": "manual_verified",
-            "anchor_node": 14038978762,
-            "anchor_distance_m": 89.77775699982695,
+            "anchor_node": 14040595950,
+            "anchor_distance_m": 8.543900778872349,
             "validation_status": "Valid"
         },
         {
@@ -68,8 +68,8 @@
             "latitude": 12.972225506107774,
             "longitude": 79.16799249061337,
             "source": "manual_verified",
-            "anchor_node": 14040595927,
-            "anchor_distance_m": 84.9448798157268,
+            "anchor_node": 5487048829,
+            "anchor_distance_m": 53.43109858590676,
             "validation_status": "Valid"
         },
         {

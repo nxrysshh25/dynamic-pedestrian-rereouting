@@ -1,18 +1,10 @@
 import React from 'react';
 import { Activity, Route, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
 
-// Average pedestrian walking speeds (m/s) by profile
-const WALKING_SPEEDS = {
-  General: 1.4,    // ~5.0 km/h
-  Elderly: 0.9,    // ~3.2 km/h
-  Pregnant: 1.0,   // ~3.6 km/h
-  Wheelchair: 0.8  // ~2.9 km/h
-};
-
-export default function StatsOverlay({ stats, profile, algorithm, routeStatus }) {
+export default function StatsOverlay({ stats, algorithm, routeStatus }) {
   if (!stats) return null;
 
-  const speedMs = WALKING_SPEEDS[profile] || WALKING_SPEEDS.General;
+  const speedMs = 1.4; // General average walking speed
   const distanceM = Number(stats.distance);
   const travelTimeSec = distanceM / speedMs;
   const travelTimeMin = Math.ceil(travelTimeSec / 60);
@@ -77,9 +69,6 @@ export default function StatsOverlay({ stats, profile, algorithm, routeStatus })
       </div>
 
 
-      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textAlign: 'right' }}>
-        Profile: <span style={{ fontWeight: '600', textTransform: 'capitalize' }}>{profile.replace('_', ' ')}</span>
-      </div>
     </div>
   );
 }

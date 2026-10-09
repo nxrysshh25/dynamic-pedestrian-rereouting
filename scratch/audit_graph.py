@@ -1,45 +1,42 @@
-import sys
-import os
-import networkx as nx
-from collections import Counter
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.graph_manager import load_or_build_graph
 
-def audit_graph():
-    G = load_or_build_graph()
-    
-    attrs = {
-        'stairs': Counter(),
-        'ramp': Counter(),
-        'crossing': Counter(),
-        'barrier': Counter(),
-        'slope_percent': Counter(),
-        'slope_status': Counter(),
-        'subway': Counter(),
-        'highway': Counter(),
-        'surface': Counter()
-    }
-    
-    lengths = []
-    
-    for u, v, data in G.edges(data=True):
-        lengths.append(data.get('length', data.get('length_m', 0)))
-        for key in attrs.keys():
-            val = data.get(key)
-            if hasattr(val, 'iloc'): # Pandas series
-                val = val.iloc[0]
-            val = str(val)
-            attrs[key][val] += 1
-            
-    print(f"Total Nodes: {G.number_of_nodes()}")
-    print(f"Total Edges: {G.number_of_edges()}")
-    print(f"Min Length: {min(lengths):.2f}, Max Length: {max(lengths):.2f}, Avg Length: {sum(lengths)/len(lengths):.2f}")
-    
-    for key, counts in attrs.items():
-        print(f"\n--- {key} ---")
-        for k, v in counts.most_common(10):
-            print(f"  {k}: {v}")
+G = load_or_build_graph()
+edges = list(G.edges(data=True, keys=True))
 
-if __name__ == "__main__":
-    audit_graph()
+print('=== STAIRS EDGES ===')
+for u,v,k,d in edges:
+    if d.get('stairs'):
+        print('  u=%s v=%s key=%s stairs=%s ramp=%s wheelchair=%s slope=%s length=%.1fm' % (u,v,k,d['stairs'],d.get('ramp'),d.get('wheelchair'),d.get('slope_percent'),d.get('length_m',0)))
+
+slopes = [d.get('slope_percent', 0) for _,_,_,d in edges if d.get('slope_percent') is not None and d.get('slope_percent', 0) > 0]
+if slopes:
+    print('\n=== SLOPE STATS (positive values only) ===')
+    print('  Count:', len(slopes))
+    print('  Max: %.1f%%' % max(slopes))
+    print('  Mean: %.1f%%' % (sum(slopes)/len(slopes)))
+    for t in [5, 8, 10, 15]:
+        count = sum(1 for s in slopes if s > t)
+        print('  > %d%%: %d edges' % (t, count))
+
+wc_vals = set()
+for _,_,_,d in edges:
+    wc = d.get('wheelchair')
+    if wc is not None:
+        wc_vals.add(str(wc))
+print('\n=== WHEELCHAIR ATTRIBUTE VALUES:', wc_vals, '===')
+
+ramp_count = sum(1 for _,_,_,d in edges if d.get('ramp'))
+print('\n=== RAMP EDGES:', ramp_count, '===')
+
+rest_count = sum(1 for _,_,_,d in edges if d.get('restricted'))
+print('=== RESTRICTED EDGES:', rest_count, '===')
+
+# Sample subway edges
+print('\n=== SUBWAY EDGES (first 3) ===')
+count = 0
+for u,v,k,d in edges:
+    if d.get('subway'):
+        print('  u=%s v=%s stairs=%s wheelchair=%s slope=%.1f' % (u,v,d.get('stairs'),d.get('wheelchair'),d.get('slope_percent',0)))
+        count += 1
+        if count >= 3:
+            break

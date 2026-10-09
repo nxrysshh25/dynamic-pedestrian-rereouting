@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CloudRain, Sun, Wind, Cloud, AlertCircle, Thermometer } from 'lucide-react';
+import { CloudRain, Sun, Wind, Cloud, Loader2 } from 'lucide-react';
 
 export default function WeatherPanel() {
   const [weather, setWeather] = useState(null);
@@ -17,7 +17,6 @@ export default function WeatherPanel() {
       })
       .catch(err => {
         setError("Unavailable");
-        console.error(err);
       });
   };
 
@@ -27,76 +26,47 @@ export default function WeatherPanel() {
     return () => clearInterval(interval);
   }, []);
 
-
-
-  if (error) {
-    return (
-      <div style={{
-        backgroundColor: 'var(--panel-bg)',
-        padding: '16px',
-        borderRadius: 'var(--radius-lg)',
-        border: '1px solid var(--border-color)',
-        boxShadow: 'var(--shadow-md)',
-        marginBottom: '24px'
-      }}>
-        <h3 style={{ fontSize: '0.875rem', fontWeight: '600', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <AlertCircle size={16} /> Weather Data
-        </h3>
-        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Status: UNAVAILABLE</p>
-      </div>
-    );
-  }
-
-  if (!weather) return null;
+  if (error || !weather) return null;
 
   const Icon = weather.precipitation > 0 ? CloudRain : (weather.temperature > 30 ? Sun : Cloud);
 
   return (
     <div style={{
-      backgroundColor: 'var(--panel-bg)',
-      padding: '16px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: '#f8fafc',
+      padding: '10px 16px',
       borderRadius: 'var(--radius-lg)',
       border: '1px solid var(--border-color)',
-      boxShadow: 'var(--shadow-md)',
-      marginBottom: '24px'
     }}>
-      <h3 style={{ fontSize: '0.875rem', fontWeight: '600', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-           Current Weather
-        </span>
-        <span style={{ 
-          fontSize: '0.7rem', 
-          padding: '2px 6px', 
-          borderRadius: '12px', 
-          backgroundColor: weather.freshness === 'LIVE' ? '#dcfce7' : '#fef3c7',
-          color: weather.freshness === 'LIVE' ? '#166534' : '#92400e'
-        }}>
-          {weather.freshness}
-        </span>
-      </h3>
-      
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '12px' }}>
-        <Icon size={32} color={weather.precipitation > 0 ? '#3b82f6' : '#f59e0b'} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <Icon size={24} color={weather.precipitation > 0 ? '#3b82f6' : '#f59e0b'} />
         <div>
-          <div style={{ fontSize: '1.25rem', fontWeight: '700' }}>
-            {weather.temperature !== null ? `${weather.temperature.toFixed(1)}°C` : '--'}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+            <span style={{ fontSize: '1.125rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+              {weather.temperature !== null ? `${weather.temperature.toFixed(1)}°C` : '--'}
+            </span>
+            <span style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-secondary)' }}>
+              {weather.weather_condition}
+            </span>
           </div>
-          <div style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-            {weather.weather_condition}
+          <div style={{ display: 'flex', gap: '12px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Wind size={12} /> {weather.wind_speed || 0} km/h
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <CloudRain size={12} /> {weather.precipitation || 0} mm
+            </span>
           </div>
         </div>
       </div>
-
-      <div style={{ display: 'flex', gap: '16px', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <CloudRain size={14} /> {weather.precipitation || 0}mm
+      
+      {weather.freshness && (
+        <span className={`badge ${weather.freshness === 'LIVE' ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.6rem' }}>
+          {weather.freshness}
         </span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <Wind size={14} /> {weather.wind_speed || 0}km/h
-        </span>
-      </div>
-
-
+      )}
     </div>
   );
 }

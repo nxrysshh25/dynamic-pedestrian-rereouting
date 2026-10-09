@@ -4,16 +4,14 @@ from pydantic import BaseModel
 from typing import List, Optional, Any
 import os
 import json
+import math
 
 from src.graph_manager import load_or_build_graph
 from src.pada_r.router import compute_pada_route
 from src.config.loader import DATASETS_CONFIG
 from src.darr.router import compute_darr_routes
-from src.darr.resilience import resilience_engine
-from src.darr.collapse_predictor import collapse_predictor
-from src.darr.counterfactual import counterfactual_evaluator
 from src.weather.service import weather_service
-from src.pcvc import pcvc_controller, evidence_tracker, VerificationEventCreateRequest
+from src.congestion.api import router as congestion_router
 import time
 
 app = FastAPI(title="Dynamic Accessibility Resilience Routing (DARR) API")
@@ -25,6 +23,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(congestion_router)
 
 G_base = None
 
@@ -44,6 +44,9 @@ class RouteRequest(BaseModel):
     origin: List[float]
     destination: List[float]
     profile: str = "general"
+    active_route_path: Optional[List[Any]] = None
+    bypass_stability: bool = False
+    now: Optional[float] = None
 
 @app.post("/api/route")
 def get_route(request: RouteRequest):
@@ -53,25 +56,53 @@ def get_route(request: RouteRequest):
     origin_tuple = (request.origin[0], request.origin[1])
     dest_tuple = (request.destination[0], request.destination[1])
     
-    path, path_edges, route_status, route_explanation, stats = compute_pada_route(
-        G_base, origin_tuple, dest_tuple, request.profile
+    path, path_edges, route_status, route_explanation, stats, candidates = compute_pada_route(
+        G_base, origin_tuple, dest_tuple, request.profile,
+        active_route_path=request.active_route_path,
+        bypass_stability=request.bypass_stability,
+        now=request.now
     )
     
     if not path or not path_edges:
-        raise HTTPException(status_code=404, detail="No path found between these locations")
+        detail_msg = "No accessible path found between these locations"
+        if isinstance(route_explanation, dict) and route_explanation.get('reason'):
+            detail_msg = route_explanation['reason']
+        elif isinstance(route_explanation, str):
+            detail_msg = route_explanation
+        raise HTTPException(status_code=404, detail=detail_msg)
         
     route_coords = []
     restricted_segments = []
     
-    for edge in path_edges:
+    for i in range(len(path) - 1):
+        u, v = path[i], path[i+1]
+        edge = path_edges[i]
         geom = edge.get('geometry')
         if geom is None or not hasattr(geom, 'coords'):
             continue
         coords = list(geom.coords)
+        u_data = G_base.nodes.get(u, {})
+        v_data = G_base.nodes.get(v, {})
+        if 'x' in u_data and 'y' in u_data and 'x' in v_data and 'y' in v_data:
+            d_start_u = math.hypot(coords[0][0] - u_data['x'], coords[0][1] - u_data['y'])
+            d_start_v = math.hypot(coords[0][0] - v_data['x'], coords[0][1] - v_data['y'])
+            if d_start_v < d_start_u:
+                coords = list(reversed(coords))
         route_coords.extend(coords)
         
-        is_restricted = edge.get('stairs', False) or edge.get('wheelchair_accessible') is False
-        if is_restricted or edge.get('cost', 0) > edge.get('length', edge.get('length_m', 0)) * 2:
+        slope_val = edge.get('slope_percent')
+        try:
+            slope_val = float(slope_val) if slope_val is not None else 0.0
+        except (ValueError, TypeError):
+            slope_val = 0.0
+            
+        has_stairs = edge.get('stairs', False) or edge.get('highway') == 'steps'
+        is_wc_inaccessible = edge.get('wheelchair_accessible') is False or edge.get('wheelchair') == 'no'
+        has_barrier = edge.get('barrier') not in ('no', 'none', 'unknown', False, None)
+        is_steep = slope_val > 8.0
+        
+        is_restricted = has_stairs or is_wc_inaccessible or has_barrier or is_steep
+        if is_restricted:
             restricted_segments.append({
                 "type": "Feature",
                 "geometry": {
@@ -80,8 +111,10 @@ def get_route(request: RouteRequest):
                 },
                 "properties": {
                     "cost": edge.get('cost', 0),
-                    "stairs": edge.get('stairs', False),
+                    "stairs": has_stairs,
                     "wheelchair_accessible": edge.get('wheelchair_accessible'),
+                    "slope_percent": slope_val,
+                    "barrier": edge.get('barrier'),
                     "cost_breakdown": edge.get('cost_breakdown', {})
                 }
             })
@@ -98,35 +131,51 @@ def get_route(request: RouteRequest):
         }
     }
     
-    try:
-        darr_res = compute_darr_routes(G_base, origin_tuple, dest_tuple, request.profile)
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"DARR candidate computation fallback: {e}")
-        darr_res = {
-            "status": "FALLBACK",
-            "candidate_routes": [],
-            "selected_route": None,
-            "network_resilience": None,
-            "collapse_risk": None,
-            "decision_summary": "PADA-R single-route baseline active."
-        }
+    # Check global active congestion state
+    from src.congestion.manager import congestion_manager
+    from src.congestion.config import CongestionConfig
+    
+    global_max_cong = 0.0
+    active_states = congestion_manager.get_active_congestion(now=request.now)
+    for state in active_states.values():
+        if state.congestion_score > global_max_cong:
+            global_max_cong = state.congestion_score
+            
+    cong_level = CongestionConfig.get_level(global_max_cong) if global_max_cong > 0 else "LOW"
 
     return {
-        "algorithm": "DARR (Dynamic Accessibility Resilience Routing)",
+        "algorithm": "A* (Profile-Aware Pedestrian Routing)",
         "route_status": route_status,
+        "profile": request.profile,
         "route_explanation": route_explanation,
         "route": geojson_route,
         "restricted_segments": {
             "type": "FeatureCollection",
             "features": restricted_segments
         },
+        "accessibility_summary": stats.get('accessibility_summary', {}),
+        "accessibility": stats.get('accessibility', {}),
         "stats": stats,
-        "candidate_routes": darr_res.get("candidate_routes", []),
-        "selected_candidate": darr_res.get("selected_route"),
-        "network_resilience": darr_res.get("network_resilience"),
-        "collapse_risk": darr_res.get("collapse_risk"),
-        "decision_summary": darr_res.get("decision_summary", "")
+        "candidate_routes": candidates,
+        "selected_candidate": candidates[0] if candidates else None,
+        "network_resilience": None,
+        "collapse_risk": None,
+        "decision_summary": route_explanation.get('reason', '') if isinstance(route_explanation, dict) else str(route_explanation),
+        "congestion_score": global_max_cong,
+        "congestion_level": cong_level
+    }
+
+@app.get("/api/profiles")
+def get_profiles():
+    from src.pada_r.profiles import PROFILE_DESCRIPTIONS, PROFILE_CONGESTION_MULTIPLIERS, PREGNANT_MAX_SLOPE, WHEELCHAIR_MAX_SLOPE, ELDERLY_SLOPE_THRESHOLD
+    return {
+        "profiles": PROFILE_DESCRIPTIONS,
+        "thresholds": {
+            "pregnant_max_slope": PREGNANT_MAX_SLOPE,
+            "wheelchair_max_slope": WHEELCHAIR_MAX_SLOPE,
+            "elderly_slope_threshold": ELDERLY_SLOPE_THRESHOLD,
+            "congestion_multipliers": PROFILE_CONGESTION_MULTIPLIERS
+        }
     }
 
 @app.get("/api/weather")
@@ -246,8 +295,12 @@ def get_pedestrian_network():
             else:
                 props['display_name'] = None
                 
+        edge_id = props.get("edge_id")
+        if not edge_id:
+            edge_id = f"edge:{u}:{v}:{k}"
+            
         clean_props = {
-            "edge_id": props.get("edge_id"),
+            "edge_id": edge_id,
             "name": props.get("name"),
             "display_name": props.get("display_name"),
             "stairs": props.get("stairs", False),
@@ -279,140 +332,23 @@ def get_candidate_routes(request: RouteRequest):
     origin_tuple = (request.origin[0], request.origin[1])
     dest_tuple = (request.destination[0], request.destination[1])
     
-    result = compute_darr_routes(G_base, origin_tuple, dest_tuple, request.profile)
-    if result["status"] == "NO_PATH_FOUND":
-        raise HTTPException(status_code=404, detail=result["message"])
-    elif result["status"] == "NO_NODES_FOUND":
-        raise HTTPException(status_code=400, detail=result["message"])
+    path, path_edges, route_status, route_explanation, stats, candidates = compute_pada_route(
+        G_base, origin_tuple, dest_tuple, request.profile, now=request.now
+    )
+    if not path:
+        detail_msg = "No accessible route found"
+        if isinstance(route_explanation, dict) and route_explanation.get('reason'):
+            detail_msg = route_explanation['reason']
+        raise HTTPException(status_code=404, detail=detail_msg)
         
-    return result
-
-@app.get("/api/accessibility/resilience")
-def get_accessibility_resilience(
-    origin_lon: float = 79.155836,
-    origin_lat: float = 12.969035,
-    dest_lon: float = 79.159534,
-    dest_lat: float = 12.970823,
-    profile: str = "wheelchair"
-):
-    if G_base is None:
-        raise HTTPException(status_code=503, detail="Graph not loaded")
-        
-    from src.routing import get_nearest_node
-    from src.darr.subgraph import subgraph_manager
-    u = get_nearest_node(G_base, (origin_lon, origin_lat))
-    v = get_nearest_node(G_base, (dest_lon, dest_lat))
-    
-    G_sub = subgraph_manager.get_accessible_subgraph(G_base, profile)
-    aoc = resilience_engine.calculate_aoc(G_sub, u, v)
-    arl = resilience_engine.calculate_arl(G_sub, u, v)
-    
     return {
-        "profile": profile,
-        "origin_node": u,
-        "destination_node": v,
-        "aoc": aoc,
-        "arl": arl
+        "status": "SUCCESS",
+        "algorithm": "A*",
+        "profile": request.profile,
+        "selected_route": candidates[0] if candidates else None,
+        "candidate_routes": candidates,
+        "network_resilience": None,
+        "collapse_risk": None,
+        "decision_summary": route_explanation.get('reason', '')
     }
 
-@app.get("/api/accessibility/collapse-risk")
-def get_accessibility_collapse_risk(
-    origin_lon: float = 79.155836,
-    origin_lat: float = 12.969035,
-    dest_lon: float = 79.159534,
-    dest_lat: float = 12.970823,
-    forecast_seconds: float = 300.0
-):
-    if G_base is None:
-        raise HTTPException(status_code=503, detail="Graph not loaded")
-        
-    from src.routing import get_nearest_node
-    u = get_nearest_node(G_base, (origin_lon, origin_lat))
-    v = get_nearest_node(G_base, (dest_lon, dest_lat))
-    
-    return collapse_predictor.evaluate_all_profiles(G_base, u, v, forecast_seconds)
-
-@app.get("/api/accessibility/critical-edges")
-def get_critical_edges(profile: str = "wheelchair", threshold: float = 0.4):
-    if G_base is None:
-        raise HTTPException(status_code=503, detail="Graph not loaded")
-        
-    edges = resilience_engine.identify_critical_edges(G_base, profile, threshold)
-    features = []
-    for e in edges:
-        if e.get("coordinates"):
-            features.append({
-                "type": "Feature",
-                "geometry": {
-                    "type": "LineString",
-                    "coordinates": e["coordinates"]
-                },
-                "properties": {
-                    "u": e["u"],
-                    "v": e["v"],
-                    "name": e["name"],
-                    "cad": e["cad"],
-                    "differential_cad": e["differential_cad"],
-                    "is_cut_edge": e["is_cut_edge"]
-                }
-            })
-    return {"type": "FeatureCollection", "features": features}
-
-class SimulateAssignmentRequest(BaseModel):
-    candidate_path: List[Any]
-    target_profile: str = "wheelchair"
-    simulated_load: Optional[int] = 25
-
-@app.post("/api/routing/simulate-assignment")
-def simulate_assignment(req: SimulateAssignmentRequest):
-    if G_base is None:
-        raise HTTPException(status_code=503, detail="Graph not loaded")
-        
-    if not req.candidate_path or len(req.candidate_path) < 2:
-        raise HTTPException(status_code=400, detail="candidate_path must contain at least 2 nodes")
-        
-    return counterfactual_evaluator.simulate_assignment(
-        G_base, req.candidate_path, req.target_profile, simulated_load=req.simulated_load
-    )
-
-# ============================================================================
-# PCVC (Profile-Coupled Counterfactual Verification Controller) Endpoints
-# ============================================================================
-
-@app.get("/api/accessibility/verification-target")
-def get_verification_target(profile: str = "wheelchair", top_k: int = 5):
-    """
-    PCVC Closed-Loop Target Identification:
-    Finds uncertain edges for the target profile, runs counterfactual resilience analysis,
-    ranks by verification priority, and performs safe-return probe selection.
-    """
-    if G_base is None:
-        raise HTTPException(status_code=503, detail="Graph not loaded yet")
-    try:
-        plan = pcvc_controller.compute_verification_targets(G_base, target_profile=profile, top_k=top_k)
-        return plan.dict()
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"PCVC execution failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"PCVC calculation failed: {str(e)}")
-
-@app.post("/api/accessibility/verification-event")
-def create_verification_event(req: VerificationEventCreateRequest):
-    """
-    Creates/logs a verification task event in PENDING state.
-    Provides the integration handoff for future ESP32 + MPU6050 physical traversal evidence.
-    """
-    event = evidence_tracker.create_verification_event(
-        edge_id=req.edge_id,
-        target_profile=req.target_profile,
-        probe_profile=req.probe_profile,
-        anchor_node=req.anchor_node,
-        notes=req.notes
-    )
-    return event.dict()
-
-@app.get("/api/accessibility/verification-events")
-def list_verification_events(limit: int = 50):
-    """Lists recent verification task events."""
-    events = evidence_tracker.list_events(limit=limit)
-    return [e.dict() for e in events]

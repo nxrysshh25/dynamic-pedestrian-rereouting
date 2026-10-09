@@ -1,30 +1,64 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import Sidebar from './components/Sidebar'
 import MapCanvas from './components/MapCanvas'
 import MapLegend from './components/MapLegend'
-import DARRDecisionPanel from './components/DARRDecisionPanel'
-import AccessibilityVerification from './components/AccessibilityVerification'
+import CongestionPanel from './components/CongestionPanel'
+import StatusNotification from './components/StatusNotification'
+import CongestionBanner from './components/CongestionBanner'
+
 import './index.css'
+import './App.css'
 
 function App() {
   const [routeData, setRouteData] = useState(null);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [appState, setAppState] = useState({
+    status: 'IDLE', // IDLE, ROUTING, ROUTE_READY, ANALYZING, CONGESTION_ACTIVE, ERROR
+    message: 'Ready to plan your walk.',
+    type: 'neutral'
+  });
+  const [congestionRefreshCount, setCongestionRefreshCount] = useState(0);
   
-  // PCVC state
-  const [activeTab, setActiveTab] = useState('pcvc'); // 'darr' or 'pcvc'
-  const [verificationTarget, setVerificationTarget] = useState(null);
-  const [verificationAnchor, setVerificationAnchor] = useState(null);
+  const [isMapSelectionMode, setIsMapSelectionMode] = useState(false);
+  const [selectedMapLocation, setSelectedMapLocation] = useState(null);
 
-  // Store last requested route parameters for recalculation
+  const handleStartMapSelection = () => {
+    setIsMapSelectionMode(true);
+    setSelectedMapLocation(null);
+    setAppState({ status: 'ANALYZING', message: 'Click a pedestrian path on the map to select a location.', type: 'neutral' });
+  };
+
+  const handleMapLocationSelected = (locationData) => {
+    setIsMapSelectionMode(false);
+    setSelectedMapLocation(locationData);
+    setAppState({ status: 'IDLE', message: 'Location selected.', type: 'success' });
+  };
+
+  const handleCancelMapSelection = () => {
+    setIsMapSelectionMode(false);
+    setAppState({ status: 'IDLE', message: 'Selection cancelled.', type: 'neutral' });
+  };
+
+  // Clear congestion on fresh browser load
+  useEffect(() => {
+    fetch('http://127.0.0.1:8000/api/congestion/reset', { method: 'POST' })
+      .then(() => setCongestionRefreshCount(prev => prev + 1))
+      .catch(err => console.error('Failed to reset congestion on load:', err));
+  }, []);
+
+  // Store last requested route parameters and data for recalculation
   const lastRequest = useRef(null);
+  const previousRouteData = useRef(null);
+
+  const setStatus = (status, message, type = 'neutral') => {
+    setAppState({ status, message, type });
+  };
 
   const handleRouteCalculation = useCallback(async (origin, destination, profile, isBackground = false, originName = 'Origin', destName = 'Destination') => {
     if (!isBackground) {
-      setIsLoading(true);
-      setError(null);
+      setStatus('ROUTING', 'Finding the lowest-cost pedestrian route...', 'neutral');
       setRouteData(null);
+      previousRouteData.current = null;
     }
     lastRequest.current = { origin, destination, profile, originName, destName };
     
@@ -36,10 +70,9 @@ function App() {
       });
       
       if (!response.ok) {
-        if (response.status === 400 || response.status === 422) {
-          throw new Error('Invalid route request.');
-        }
-        throw new Error('Route calculation failed. Check the backend response.');
+        const errorData = await response.json().catch(() => ({}));
+        const errorDetail = errorData.detail || 'Route calculation failed.';
+        throw new Error(errorDetail);
       }
       
       const data = await response.json();
@@ -50,26 +83,40 @@ function App() {
       if (data.selected_candidate) {
         setSelectedCandidate(data.selected_candidate);
       }
-      // When route arrives, auto-switch to DARR tab
-      setActiveTab('darr');
+
+      if (isBackground && previousRouteData.current) {
+        const oldCoords = JSON.stringify(previousRouteData.current.route.geometry.coordinates);
+        const newCoords = JSON.stringify(data.route.geometry.coordinates);
+        const routeChanged = oldCoords !== newCoords;
+        
+        if (routeChanged && data.route_explanation?.avoids_congestion) {
+           setStatus('ROUTE_READY', '⚠ ROUTE UPDATED: ' + data.route_explanation.reason, 'warning');
+        } else if (!routeChanged && data.route_explanation?.congestion_affected) {
+           setStatus('ROUTE_READY', '✓ ROUTE STILL OPTIMAL: ' + data.route_explanation.reason, 'success');
+        } else if (routeChanged) {
+           setStatus('ROUTE_READY', '⚠ ROUTE UPDATED based on new network conditions.', 'neutral');
+        }
+      } else if (!isBackground) {
+        // Evaluate route for congestion
+        if (data.route_explanation?.congestion_affected) {
+          setStatus('ROUTE_READY', data.route_explanation.reason, 'warning');
+        } else {
+          setStatus('ROUTE_READY', data.route_explanation?.reason || 'Profile-optimized pedestrian route selected.', 'success');
+        }
+      }
+      
+      previousRouteData.current = data;
+
     } catch (err) {
       if (!isBackground) {
-        if (err.message.includes('Failed to fetch')) {
-          setError('Routing server is unavailable. Please start the FastAPI backend.');
-        } else {
-          setError(err.message);
-        }
-      } else {
-        console.error('Background route recalculation failed:', err);
-      }
-    } finally {
-      if (!isBackground) {
-        setIsLoading(false);
+        setStatus('ERROR', err.message || 'Unable to calculate route. Please try again.', 'danger');
+        setRouteData({ error: err.message, status: 'NO_ACCESSIBLE_ROUTE_FOUND' });
       }
     }
   }, []);
 
   const handleRecalculate = useCallback(() => {
+    setCongestionRefreshCount(prev => prev + 1); // trigger map refresh
     if (lastRequest.current) {
       handleRouteCalculation(
         lastRequest.current.origin, 
@@ -82,111 +129,48 @@ function App() {
     }
   }, [handleRouteCalculation]);
 
+  const [showPedestrianNetwork, setShowPedestrianNetwork] = useState(true);
+
   return (
-    <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+    <div className="app-container">
       <Sidebar 
         onCalculate={handleRouteCalculation} 
-        isLoading={isLoading} 
-        error={error} 
+        appState={appState}
+        routeData={routeData}
+        activeCandidateId={selectedCandidate?.route_id}
+        onSelectCandidate={setSelectedCandidate}
       />
-      <div style={{ flex: 1, position: 'relative' }}>
+      <div className="map-container">
         <MapCanvas 
           routeData={routeData} 
           activeCandidateId={selectedCandidate?.route_id}
           onSelectCandidate={setSelectedCandidate}
-          verificationTarget={verificationTarget}
-          verificationAnchor={verificationAnchor}
+          refreshTrigger={congestionRefreshCount}
+          isMapSelectionMode={isMapSelectionMode}
+          selectedMapLocation={selectedMapLocation}
+          onMapLocationSelected={handleMapLocationSelected}
+          showPedestrianNetwork={showPedestrianNetwork}
         />
-        
-        {/* Right Floating Drawer: Tab toggle between DARR and PCVC */}
-        <div style={{
-          position: 'absolute',
-          top: '24px',
-          right: '24px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '8px',
-          zIndex: 10,
-          maxHeight: 'calc(100vh - 48px)',
-          pointerEvents: 'none',
-          overflowY: 'auto'
-        }}>
-          {/* Top Segmented Controls */}
-          <div style={{
-            pointerEvents: 'auto',
-            display: 'flex',
-            backgroundColor: 'rgba(255, 255, 255, 0.9)',
-            backdropFilter: 'blur(8px)',
-            borderRadius: '8px',
-            padding: '3px',
-            border: '1px solid var(--border-color)',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-            width: '360px'
-          }}>
-            <button
-              onClick={() => setActiveTab('darr')}
-              style={{
-                flex: 1,
-                padding: '6px 10px',
-                borderRadius: '6px',
-                border: 'none',
-                fontSize: '0.6875rem',
-                fontWeight: activeTab === 'darr' ? '700' : '500',
-                backgroundColor: activeTab === 'darr' ? 'var(--accent-color)' : 'transparent',
-                color: activeTab === 'darr' ? '#ffffff' : 'var(--text-secondary)',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              Route Resilience (DARR)
-            </button>
-            <button
-              onClick={() => setActiveTab('pcvc')}
-              style={{
-                flex: 1,
-                padding: '6px 10px',
-                borderRadius: '6px',
-                border: 'none',
-                fontSize: '0.6875rem',
-                fontWeight: activeTab === 'pcvc' ? '700' : '500',
-                backgroundColor: activeTab === 'pcvc' ? '#059669' : 'transparent',
-                color: activeTab === 'pcvc' ? '#ffffff' : 'var(--text-secondary)',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              Verification (PCVC)
-            </button>
-          </div>
+        <CongestionBanner refreshTrigger={congestionRefreshCount} />
+        <CongestionPanel 
+          onRecalculate={handleRecalculate} 
+          onRefreshMap={() => setCongestionRefreshCount(prev => prev + 1)}
+          setAppStatus={setStatus} 
+          isMapSelectionMode={isMapSelectionMode}
+          selectedMapLocation={selectedMapLocation}
+          onStartMapSelection={handleStartMapSelection}
+          onCancelMapSelection={handleCancelMapSelection}
+          onClearSelectedMapLocation={() => setSelectedMapLocation(null)}
+        />
 
-          <div style={{ pointerEvents: 'auto' }}>
-            {activeTab === 'darr' ? (
-              routeData ? (
-                <DARRDecisionPanel 
-                  routeData={routeData}
-                  selectedCandidate={selectedCandidate}
-                  onSelectCandidate={setSelectedCandidate}
-                  profile={lastRequest.current?.profile || routeData.route?.properties?.profile || 'general'}
-                />
-              ) : (
-                <div className="glass-panel" style={{ width: '360px', padding: '16px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                  Calculate a route from the left sidebar to view DARR resilience and alternative candidate corridors.
-                </div>
-              )
-            ) : (
-              <AccessibilityVerification 
-                onSelectTargetEdge={setVerificationTarget}
-                onSelectAnchor={setVerificationAnchor}
-              />
-            )}
-          </div>
-        </div>
-        
-        <MapLegend />
+        <MapLegend 
+          showPedestrianNetwork={showPedestrianNetwork}
+          onTogglePedestrianNetwork={() => setShowPedestrianNetwork(prev => !prev)}
+        />
+        <StatusNotification appState={appState} />
       </div>
     </div>
   )
 }
 
 export default App
-

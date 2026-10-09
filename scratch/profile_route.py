@@ -8,10 +8,7 @@ from src.graph_manager import load_or_build_graph
 from src.pada_r.router import compute_pada_route
 from src.darr.router import compute_darr_routes
 from src.darr.subgraph import subgraph_manager
-from src.darr.resilience import resilience_engine
 from src.darr.candidate_generator import route_generator
-from src.darr.counterfactual import counterfactual_evaluator
-from src.darr.collapse_predictor import collapse_predictor
 from src.weather.service import weather_service
 from src.routing import get_nearest_node
 
@@ -57,50 +54,13 @@ def profile_representative_route():
     print(f"4. PADA-R routing: {t_pada:.2f} ms")
 
     # 5. DARR Candidate Generation breakdown
-    # Let's measure CAD standalone
-    sample_edge = next(iter(G.edges(keys=True)))
-    t0 = time.perf_counter()
-    cad_val = resilience_engine.calculate_cad_for_edge(G, sample_edge[0], sample_edge[1], profile)
-    t_cad_1 = (time.perf_counter() - t0) * 1000
-    print(f"5a. CAD for single edge (no bridge cache): {t_cad_1:.2f} ms")
 
-    # Let's measure CAD standalone with precomputed bridges
-    bridges = resilience_engine._get_bridges(G_sub)
-    t0 = time.perf_counter()
-    cad_val_cached = resilience_engine.calculate_cad_for_edge(G, sample_edge[0], sample_edge[1], profile, bridge_cache=bridges)
-    t_cad_cached = (time.perf_counter() - t0) * 1000
-    print(f"5b. CAD for single edge (WITH bridge cache): {t_cad_cached:.4f} ms")
 
     # 6. Candidate Generation
     t0 = time.perf_counter()
     candidates = route_generator.generate_candidate_routes(G, orig_node, dest_node, profile)
     t_candidates = (time.perf_counter() - t0) * 1000
     print(f"6. DARR candidate routes generation: {t_candidates:.2f} ms")
-
-    # 7. AOC & ARL standalone
-    t0 = time.perf_counter()
-    aoc = resilience_engine.calculate_aoc(G_sub, orig_node, dest_node)
-    t_aoc = (time.perf_counter() - t0) * 1000
-    print(f"7. AOC calculation: {t_aoc:.2f} ms (val={aoc})")
-
-    all_paths = [c["path_nodes"] for c in candidates] if candidates else []
-    t0 = time.perf_counter()
-    arl = resilience_engine.calculate_arl(G_sub, orig_node, dest_node, all_paths)
-    t_arl = (time.perf_counter() - t0) * 1000
-    print(f"8. ARL calculation: {t_arl:.2f} ms (val={arl})")
-
-    # 8. MAL standalone
-    if candidates:
-        t0 = time.perf_counter()
-        mal_res = counterfactual_evaluator.simulate_assignment(G, candidates[0]["path_nodes"], profile, source=orig_node, destination=dest_node)
-        t_mal = (time.perf_counter() - t0) * 1000
-        print(f"9. MAL standalone simulation (1 candidate): {t_mal:.2f} ms")
-
-    # 9. Collapse prediction
-    t0 = time.perf_counter()
-    collapse_res = collapse_predictor.predict_resilience(G, orig_node, dest_node, profile)
-    t_collapse = (time.perf_counter() - t0) * 1000
-    print(f"10. Collapse prediction: {t_collapse:.2f} ms")
 
     # 10. End-to-end compute_darr_routes
     t0 = time.perf_counter()

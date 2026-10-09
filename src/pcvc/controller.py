@@ -69,7 +69,8 @@ class PCVCController:
         G: nx.Graph,
         target_profile: str = "wheelchair",
         top_k: int = 5,
-        uncertainty_threshold: float = 0.4
+        uncertainty_threshold: float = 0.4,
+        candidate_limit: int = 40
     ) -> VerificationPlanResponse:
         """
         Main PCVC pipeline:
@@ -83,7 +84,7 @@ class PCVCController:
             G,
             profile=target_profile,
             uncertainty_threshold=uncertainty_threshold,
-            limit=40 # Evaluate up to 40 candidates for responsiveness
+            limit=candidate_limit # Evaluate up to candidate_limit candidates for responsiveness
         )
 
         if not uncertain_states:

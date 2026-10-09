@@ -1,0 +1,373 @@
+{
+  "report_title": "PCVC Experiment Readiness Report",
+  "project_name": "Profile-Coupled Counterfactual Verification Controller (PCVC) for Accessibility-Aware Pedestrian Networks",
+  "audit_timestamp": "2026-10-05T13:30:00+05:30",
+  "target_journal": "IEEE Access",
+  "repository_root": "d:\\dynamic_pedestrian_rerouting",
+  "project": {
+    "frontend": {
+      "framework": "React",
+      "version": "19.2.8",
+      "build_tool": "Vite 8.2.2",
+      "map_renderer": "MapLibre GL 6.6.0 (maplibre-gl 6.6.0, react-map-gl 8.1.2)",
+      "icons": "lucide-react 1.39.0",
+      "linter": "oxlint 1.79.0",
+      "manifest_path": "frontend/package.json"
+    },
+    "backend": {
+      "framework": "FastAPI",
+      "installed_version": "0.141.1",
+      "requirements_version": "0.115.6",
+      "asgi_server": "Uvicorn 0.52.4",
+      "schema_validator": "Pydantic 2.13.5",
+      "config_parser": "PyYAML 6.0.3",
+      "python_version": "3.14.2"
+    },
+    "routing_graph_libraries": {
+      "networkx": { "installed": "3.6.1", "requirements": "3.4.2" },
+      "osmnx": { "installed": "2.1.1", "requirements": "1.9.4" },
+      "geopandas": { "installed": "1.1.4", "requirements": "1.0.1" },
+      "shapely": { "installed": "2.1.2" },
+      "pandas": { "installed": "3.0.5", "requirements": "2.2.3" },
+      "numpy": { "installed": "2.5.2" }
+    },
+    "entry_points": {
+      "backend_api": "uvicorn src.api:app --reload --port 8000",
+      "frontend_ui": "cd frontend && npm run dev",
+      "test_suite": "pytest tests/ -v",
+      "dataset_build_from_csv": "python scripts/build_vit_dataset_from_csv.py",
+      "dataset_build_final": "python scripts/build_final_dataset.py",
+      "pcvc_controller_python": "from src.pcvc import pcvc_controller; plan = pcvc_controller.compute_verification_targets(G, target_profile='wheelchair', top_k=5)",
+      "pcvc_target_selection_api": "GET http://localhost:8000/api/accessibility/verification-target?profile=wheelchair&top_k=5"
+    }
+  },
+  "dataset": {
+    "active_key": "vit_vellore",
+    "exact_file_path": "d:\\dynamic_pedestrian_rerouting\\data\\vit_vellore\\processed\\vit_vellore_academic_pedestrian_network.pkl",
+    "graphml_file_path": "d:\\dynamic_pedestrian_rerouting\\data\\vit_vellore\\processed\\vit_vellore_academic_pedestrian_network.graphml",
+    "format": "pickle (binary serialization of NetworkX MultiGraph)",
+    "loader_function": "src.graph_manager.load_or_build_graph",
+    "geometry_enforcement": "src.graph_manager._ensure_edge_geometry",
+    "graph_type": "MultiGraph",
+    "is_directed": false,
+    "is_multigraph": true,
+    "node_count": 1551,
+    "edge_count": 1721,
+    "connected_components_count": 9,
+    "component_sizes": [1509, 14, 13, 6, 3, 2, 2, 1, 1],
+    "largest_component_size": 1509,
+    "isolated_node_count": 2,
+    "isolated_node_ids": [14095322500, 14095322501],
+    "parallel_edge_pairs_count": 24,
+    "total_edges_in_parallel_pairs": 48,
+    "crs": "EPSG:4326 (WGS84)",
+    "spatial_bounding_box": {
+      "min_longitude": 79.1382836,
+      "max_longitude": 79.1733106,
+      "min_latitude": 12.9576761,
+      "max_latitude": 12.9941877
+    },
+    "campus_identity": "VIT Vellore Academic Pedestrian Network, Vellore, Tamil Nadu, India",
+    "landmark_count": 9,
+    "landmarks_file": "data/vit_vellore/processed/vit_manual_locations.json"
+  },
+  "attributes": {
+    "total_edges": 1721,
+    "attribute_audit": {
+      "wheelchair": {
+        "data_type": "str",
+        "known_count": 324,
+        "unknown_count": 1397,
+        "percent_unknown": 81.17,
+        "value_counts": { "unknown": 1397, "likely": 317, "no": 7 },
+        "usage_in_pcvc": "Primary uncertainty weight (0.35) for wheelchair profile; 'no' acts as physical exclusion"
+      },
+      "stairs": {
+        "data_type": "bool",
+        "known_count": 1721,
+        "unknown_count": 0,
+        "percent_unknown": 0.0,
+        "value_counts": { "False": 1714, "True": 7 },
+        "usage_in_pcvc": "Hard constraint forbidding wheelchair traversal; uncertainty weight for elderly/pregnant (0.25)"
+      },
+      "slope_percent": {
+        "data_type": "float | None",
+        "known_count": 1714,
+        "unknown_count": 7,
+        "percent_unknown": 0.41,
+        "value_counts": { "2.0": 1564, "3.0": 81, "3.5": 64, "12.0": 5, "None": 7 },
+        "usage_in_pcvc": "Uncertainty weight across profiles (0.20-0.25); barrier if >6% (wheelchair) or >8% (elderly/pregnant)"
+      },
+      "width_m": {
+        "data_type": "float",
+        "known_count": 1721,
+        "unknown_count": 0,
+        "percent_unknown": 0.0,
+        "value_counts": { "2.0": 1721 },
+        "usage_in_pcvc": "Uncertainty weight (0.15-0.25); synthetic constant default with zero network variance"
+      },
+      "ramp": {
+        "data_type": "bool",
+        "known_count": 1721,
+        "unknown_count": 0,
+        "percent_unknown": 0.0,
+        "value_counts": { "False": 1721 },
+        "usage_in_pcvc": "Uncertainty weight (0.10) for wheelchair; zero confirmed ramps in current dataset"
+      },
+      "surface": {
+        "data_type": "str",
+        "known_count": 607,
+        "unknown_count": 1114,
+        "percent_unknown": 64.73,
+        "value_counts": { "unknown": 1114, "asphalt": 409, "unpaved": 129, "paving_stones": 38, "ground": 12, "paved": 10, "dirt": 6, "compacted": 3 },
+        "usage_in_pcvc": "Uncertainty weight (0.10-0.30); effort multiplier in PADA-R routing"
+      },
+      "smoothness_value": {
+        "data_type": "NoneType",
+        "known_count": 0,
+        "unknown_count": 1721,
+        "percent_unknown": 100.0,
+        "value_counts": { "None": 1721 },
+        "usage_in_pcvc": "Uncertainty weight (0.05-0.25); 100% missing in dataset"
+      },
+      "tactile_paving": {
+        "data_type": "NoneType",
+        "known_count": 0,
+        "unknown_count": 1721,
+        "percent_unknown": 100.0,
+        "value_counts": { "None": 1721 },
+        "usage_in_pcvc": "Uncertainty weight (0.05); 100% missing in dataset"
+      },
+      "wheelchair_accessible": {
+        "data_type": "NoneType",
+        "known_count": 0,
+        "unknown_count": 1721,
+        "percent_unknown": 100.0,
+        "value_counts": { "None": 1721 },
+        "usage_in_pcvc": "Fallback schema check in compute_edge_uncertainty"
+      },
+      "accessible": {
+        "data_type": "bool",
+        "known_count": 1721,
+        "unknown_count": 0,
+        "percent_unknown": 0.0,
+        "value_counts": { "True": 1714, "False": 7 },
+        "usage_in_pcvc": "Base accessibility routing flag (False on exactly the 7 stairs edges)"
+      }
+    },
+    "critical_summary_counts": {
+      "confirmed_stairs": 7,
+      "confirmed_ramps": 0,
+      "explicit_wheelchair_yes": 0,
+      "inferred_wheelchair_likely": 317,
+      "explicit_wheelchair_inaccessible": 7,
+      "wheelchair_unknown_epistemic": 1397,
+      "methodological_note": "UNKNOWN is strictly distinguished from INACCESSIBLE. Edges with wheelchair='unknown' are active verification candidates, not blocked corridors."
+    }
+  },
+  "profiles": {
+    "implemented_profiles": ["general", "elderly", "pregnant", "wheelchair"],
+    "uncertainty_weights": {
+      "wheelchair": { "wheelchair": 0.35, "slope_percent": 0.20, "width_m": 0.15, "ramp": 0.10, "surface": 0.10, "smoothness_value": 0.05, "tactile_paving": 0.05 },
+      "elderly": { "stairs": 0.25, "slope_percent": 0.25, "surface": 0.20, "width_m": 0.15, "smoothness_value": 0.10, "tactile_paving": 0.05 },
+      "pregnant": { "stairs": 0.25, "slope_percent": 0.25, "surface": 0.20, "width_m": 0.15, "smoothness_value": 0.10, "tactile_paving": 0.05 },
+      "general": { "surface": 0.30, "smoothness_value": 0.25, "width_m": 0.25, "slope_percent": 0.20 }
+    },
+    "constraints": {
+      "general": { "walking_speed_mps": 1.4, "stairs_allowed": true, "max_slope_percent": null, "min_width_m": 0.0 },
+      "elderly": { "walking_speed_mps": 0.9, "stairs_allowed": true, "stairs_penalty": 5.0, "max_slope_percent": 8.0, "min_width_m": 0.6 },
+      "pregnant": { "walking_speed_mps": 1.0, "stairs_allowed": true, "stairs_penalty": 3.5, "max_slope_percent": 8.0, "min_width_m": 0.6 },
+      "wheelchair": { "walking_speed_mps": 0.8, "stairs_allowed": false, "stairs_penalty": 9999.0, "max_slope_percent": 6.0, "min_width_m": 0.9, "wheelchair_exclusion": "no" }
+    },
+    "subgraph_edge_counts": {
+      "general": 1721,
+      "elderly": 1716,
+      "pregnant": 1716,
+      "wheelchair": 1714
+    }
+  },
+  "uncertainty": {
+    "source_file": "src/pcvc/uncertainty.py",
+    "function_name": "compute_edge_uncertainty",
+    "formula_confidence": "confidence(e, p) = round(min(1.0, max(0.0, sum(w_known) / sum(w_total))), 3)",
+    "formula_uncertainty": "uncertainty(e, p) = round(1.0 - confidence(e, p), 3)",
+    "default_threshold": 0.40,
+    "uncertainty_range": "[0.0, 1.0]",
+    "candidate_pool_above_threshold": {
+      "wheelchair": 1398,
+      "elderly": 7,
+      "pregnant": 7,
+      "general": 1114
+    },
+    "profile_exclusion_rule": "If profile == 'wheelchair' and edge has confirmed stairs, edge is bypassed as known inaccessible rather than uncertain."
+  },
+  "counterfactual": {
+    "source_file": "src/pcvc/counterfactual.py",
+    "function_name": "evaluate_counterfactual_impact",
+    "metrics_evaluated": ["baseline_aoc", "baseline_arl", "counterfactual_aoc", "counterfactual_arl", "delta_aoc", "delta_arl", "mal_impact", "cad", "is_cut_edge"],
+    "diagnostic_flag": "IMPORTANT EXPERIMENTAL DIAGNOSTIC — REDUNDANT/COUPLED IMPACT METRICS",
+    "coupling_verification": {
+      "baseline_arl_equals_baseline_aoc": true,
+      "cf_arl_equals_cf_aoc": true,
+      "delta_arl_equals_delta_aoc": true,
+      "mal_equals_delta_arl": true,
+      "discrepancies_found": 0,
+      "root_cause": "In src/darr/resilience.py:calculate_arl, when candidate_paths is None, it returns float(aoc). In src/pcvc/counterfactual.py, calculate_arl is called without candidate_paths, making ARL and AOC identical."
+    }
+  },
+  "priority": {
+    "source_file": "src/pcvc/controller.py",
+    "class_name": "PCVCController",
+    "function_name": "compute_verification_targets",
+    "defined_weights": { "w_uncertainty": 0.25, "w_delta_arl": 0.25, "w_delta_aoc": 0.15, "w_mal": 0.15, "w_cad": 0.15, "w_cost": 0.03, "w_risk": 0.02 },
+    "actually_used_weights": { "w_uncertainty": 0.25, "w_delta_arl": 0.25, "w_delta_aoc": 0.15, "w_mal": 0.15, "w_cad": 0.15 },
+    "defined_but_unused_weights": ["w_cost", "w_risk"],
+    "sum_of_used_weights": 0.95,
+    "normalization_method": "Linear max scaling: norm_val = val / max(candidates)",
+    "sorting_tiebreaker_key": "(priority_score DESC, cad DESC, uncertainty DESC)",
+    "evaluated_candidates_limit": 40,
+    "returned_top_k": 5
+  },
+  "probe_selection": {
+    "source_file": "src/pcvc/probe_selector.py",
+    "function_name": "select_best_probe",
+    "feasibility_rule": "Closed-Loop Safe-Return Rule: Target Edge Feasible AND Outbound Feasible AND Return Feasible",
+    "route_topology": "Anchor -> Outbound Path -> Target Edge (u -> v) -> Return Path -> Anchor",
+    "anchor_source": "Nearest of 9 VIT campus landmarks in data/vit_vellore/processed/vit_manual_locations.json",
+    "anchor_profile_dependence": "Profile-independent Euclidean landmark distance",
+    "anchor_fallback": "Falls back to target edge node u if no landmark found",
+    "travel_cost_formula": "round(outbound_distance_m + edge_length_m + return_distance_m, 1)",
+    "selection_rule": "Lowest total travel cost among eligible profiles; stable tie-break order: general -> elderly -> pregnant -> wheelchair"
+  },
+  "evidence": {
+    "source_files": ["src/pcvc/models.py", "src/pcvc/evidence.py"],
+    "event_states": ["PENDING", "IN_PROGRESS", "COMPLETED", "REJECTED"],
+    "evidence_states": ["UNKNOWN", "UNCERTAIN", "VERIFIED", "STALE"],
+    "freshness_formula": "freshness(t) = exp(-lambda_evidence * delta_t)",
+    "decay_parameter_lambda": 0.0001,
+    "half_life_seconds": 6931.47,
+    "stale_threshold": 0.40,
+    "time_to_stale_seconds": 9162.91,
+    "hardware_integration_status": "DEFINED FOR FUTURE INTEGRATION (Pydantic schema contract HardwareEvidencePayload; zero live physical hardware ingestion or simulation active)",
+    "graph_mutation_on_complete": false,
+    "network_recomputation_trigger": false
+  },
+  "apis": [
+    { "method": "GET", "path": "/api/config", "function": "get_config", "purpose": "Active dataset configuration" },
+    { "method": "POST", "path": "/api/route", "function": "get_route", "purpose": "PADA-R & DARR single-route calculation" },
+    { "method": "GET", "path": "/api/weather", "function": "get_weather", "purpose": "Current weather query" },
+    { "method": "GET", "path": "/api/landmarks", "function": "get_landmarks", "purpose": "Verified campus landmarks" },
+    { "method": "GET", "path": "/api/academic_blocks", "function": "get_academic_blocks", "purpose": "Campus academic block GeoJSON" },
+    { "method": "GET", "path": "/api/pedestrian_network/stats", "function": "get_pedestrian_network_stats", "purpose": "Pedestrian network feature counts" },
+    { "method": "GET", "path": "/api/pedestrian_network", "function": "get_pedestrian_network", "purpose": "Full network GeoJSON" },
+    { "method": "POST", "path": "/api/routes/candidates", "function": "get_candidate_routes", "purpose": "DARR multi-corridor candidate routes" },
+    { "method": "GET", "path": "/api/accessibility/resilience", "function": "get_accessibility_resilience", "purpose": "AOC & ARL query" },
+    { "method": "GET", "path": "/api/accessibility/collapse-risk", "function": "get_accessibility_collapse_risk", "purpose": "Profile collapse prediction" },
+    { "method": "GET", "path": "/api/accessibility/critical-edges", "function": "get_critical_edges", "purpose": "CAD bottleneck edge extraction" },
+    { "method": "POST", "path": "/api/routing/simulate-assignment", "function": "simulate_assignment", "purpose": "Synthetic route load simulation" },
+    { "method": "GET", "path": "/api/accessibility/verification-target", "function": "get_verification_target", "purpose": "PCVC target identification & probe selection" },
+    { "method": "POST", "path": "/api/accessibility/verification-event", "function": "create_verification_event", "purpose": "PCVC verification event dispatch" },
+    { "method": "GET", "path": "/api/accessibility/verification-events", "function": "list_verification_events", "purpose": "PCVC verification event listing" }
+  ],
+  "tests": {
+    "total_collected": 40,
+    "passed": 40,
+    "failed": 0,
+    "skipped": 0,
+    "runtime_seconds": 36.52,
+    "file_breakdown": {
+      "tests/test_pcvc.py": 12,
+      "tests/test_darr.py": 21,
+      "tests/test_routing_dynamic.py": 3,
+      "tests/test_signal_decay.py": 4
+    },
+    "validation_distinction": "Software unit test passing validates runtime correctness and absence of regressions; it does not constitute experimental proof of research superiority."
+  },
+  "experiments": {
+    "E1_natural_uncertainty": { "status": "READY", "notes": "Fully executable via compute_edge_uncertainty across all 1721 edges." },
+    "E2_oracle_masking": { "status": "PARTIALLY READY", "notes": "Ground truth attributes exist; requires dedicated masking & correlation evaluation harness script." },
+    "E3_ranking_comparison": { "status": "PARTIALLY READY", "notes": "Baselines configurable via custom weights; requires comparative batch ranking harness." },
+    "E4_profile_sensitivity": { "status": "READY", "notes": "Directly executable via controller for all 4 profiles." },
+    "E5_safe_return_evaluation": { "status": "READY", "notes": "Probe selector returns complete distance, feasibility, and rejection telemetry." },
+    "E6_probe_correctness": { "status": "READY", "notes": "Verified by unit tests; executable across graph edges." },
+    "E7_ablation": { "status": "PARTIALLY READY", "notes": "Weights are modifiable, but delta_AOC, delta_ARL, and MAL are collinear." },
+    "E8_runtime": { "status": "READY", "notes": "Measured at 4.44s for 40 candidate edges (~111 ms/edge)." },
+    "E9_scalability": { "status": "PARTIALLY READY", "notes": "Candidate limit is hardcoded to 40 in controller; requires exposing limit parameter." }
+  },
+  "baselines": {
+    "B1_random": "Uniform random score in [0, 1]",
+    "B2_uncertainty_only": "Score = norm_uncertainty (w_uncertainty=1.0)",
+    "B3_cad_only": "Score = CAD (w_cad=1.0)",
+    "B4_counterfactual_only": "Score = norm_delta_arl (w_delta_arl=1.0)",
+    "B5_uncertainty_plus_cad": "Score = 0.5 * norm_unc + 0.5 * CAD",
+    "B6_full_pcvc": "Score = 0.25 * norm_unc + 0.55 * norm_delta_arl + 0.15 * CAD",
+    "recommended_single_impact_metric": "delta_arl (avoids collinear coupling with delta_aoc and mal)"
+  },
+  "parameters": {
+    "uncertainty_threshold": 0.40,
+    "candidate_evaluation_limit": 40,
+    "top_k_candidates": 5,
+    "priority_weights": { "w_unc": 0.25, "w_d_arl": 0.25, "w_d_aoc": 0.15, "w_mal": 0.15, "w_cad": 0.15, "w_cost_unused": 0.03, "w_risk_unused": 0.02 },
+    "lambda_evidence": 0.0001,
+    "stale_threshold": 0.40,
+    "random_seeds": null
+  },
+  "reproducibility": {
+    "os": "Windows 11 (win32)",
+    "python": "3.14.2",
+    "node": "v24.13.0",
+    "npm": "11.6.2",
+    "pip_manifest": {
+      "networkx": "3.6.1",
+      "osmnx": "2.1.1",
+      "geopandas": "1.1.4",
+      "fastapi": "0.141.1",
+      "uvicorn": "0.52.4",
+      "pydantic": "2.13.5",
+      "pyyaml": "6.0.3",
+      "pytest": "9.1.1",
+      "shapely": "2.1.2",
+      "pandas": "3.0.5",
+      "numpy": "2.5.2"
+    }
+  },
+  "legacy_audit": {
+    "melbourne_references": { "status": "FOUND (ISOLATED)", "paths": ["src/data/melbourne_loader.py", "src/data/fetch_datasets.py", "README.md", "src/evaluation/benchmark.py"], "pcvc_impact": "Zero imports or dependencies in src/pcvc/" },
+    "simulation_engine": { "status": "NOT FOUND", "paths": ["src/simulation/"], "pcvc_impact": "Directory contains only __pycache__; no active simulation code" },
+    "congestion_model": { "status": "NOT FOUND", "paths": ["src/congestion/"], "pcvc_impact": "Directory contains only __pycache__; legacy model decoupled" },
+    "dynamic_waterlogging": { "status": "NOT FOUND IN GRAPH", "paths": [], "pcvc_impact": "Zero edges in active graph contain water_depth" },
+    "legacy_streamlit": { "status": "NOT FOUND IN SRC", "paths": ["src/app.py deleted"], "pcvc_impact": "Replaced by React frontend" },
+    "duplicate_pcvc_modules": { "status": "NOT FOUND", "paths": ["src/pcvc/"], "pcvc_impact": "Single unified PCVC package" }
+  },
+  "paper_ready_facts": {
+    "dataset": "VIT Vellore campus network (1551 nodes, 1721 edges, 9 components, largest component 1509 nodes).",
+    "accessibility": "7 confirmed stairs (0.41%), 0 confirmed ramps, 1397 unverified wheelchair tags (81.17%), 607 confirmed surfaces (35.27%), 1714 measured slopes (99.59%).",
+    "profiles": "4 profiles (General, Elderly, Pregnant, Wheelchair) with distinct speed, slope, width, and stairs constraints.",
+    "subgraph_counts": "General: 1721 edges; Elderly/Pregnant: 1716 edges; Wheelchair: 1714 edges.",
+    "counterfactual_diagnostic": "ARL collapses to integer AOC, yielding delta_ARL == delta_AOC == MAL in candidate scoring.",
+    "priority_score": "Evaluates uncertainty (0.25), counterfactual impact (0.55), and CAD (0.15); cost (0.03) and risk (0.02) defined but unused.",
+    "safe_return": "Tri-partite feasibility test (Target Feasible AND Outbound Feasible AND Return Feasible) from nearest of 9 campus landmarks.",
+    "evidence_decay": "Exponential decay with lambda=0.0001 s^-1 (half-life ~1.925h, stale threshold 0.40).",
+    "runtime": "End-to-end PCVC target selection executes in 4.44s for 40 candidate edges (~111 ms/candidate)."
+  },
+  "phase6_checklist": {
+    "ready_now": [
+      "E1: Natural Uncertainty Distribution Analysis",
+      "E4: Profile Sensitivity Comparison",
+      "E5: Safe-Return Detour & Feasibility Evaluation",
+      "E6: Probe Constraint Correctness Validation",
+      "E8: Computational Runtime Profiling"
+    ],
+    "partially_ready": [
+      "E2: Oracle Hold-Out / Masking Experiment (Needs scripts/experiments/run_e2_oracle_masking.py)",
+      "E3: Baseline Ranking Comparison (Needs scripts/experiments/run_e3_baselines.py)",
+      "E7: Metric Ablation Study (Needs scripts/experiments/run_e7_ablation.py)",
+      "E9: Scalability Benchmarking (Needs exposure of candidate_limit parameter and scripts/experiments/run_e9_scalability.py)"
+    ],
+    "missing_future_integration": [
+      "Live ESP32/MPU6050 physical telemetry ingestion",
+      "Automated graph attribute mutation upon event completion",
+      "In-situ walkway width and ramp field measurements"
+    ]
+  }
+}

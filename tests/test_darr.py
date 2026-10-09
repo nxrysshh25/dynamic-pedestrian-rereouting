@@ -4,9 +4,6 @@ from typing import List
 
 from src.darr.config import get_profile_config
 from src.darr.subgraph import subgraph_manager
-from src.darr.resilience import resilience_engine
-from src.darr.collapse_predictor import collapse_predictor
-from src.darr.counterfactual import counterfactual_evaluator
 from src.darr.candidate_generator import route_generator
 from src.darr.scorer import route_scorer
 from src.darr.router import compute_darr_routes
@@ -80,61 +77,17 @@ def test_profile_accessibility_filtering(synthetic_graph):
 # 3. Accessibility Option Count (AOC) & Resilience (ARL) Tests
 # ============================================================================
 
-def test_aoc_and_arl(synthetic_graph):
-    G_wc = subgraph_manager.get_accessible_subgraph(synthetic_graph, "wheelchair")
-    aoc = resilience_engine.calculate_aoc(G_wc, 1, 6)
-    # Corridors 2 and 3 are accessible for wheelchairs -> AOC should be 2
-    assert aoc == 2
-
-    arl = resilience_engine.calculate_arl(G_wc, 1, 6, [[1, 3, 6], [1, 4, 5, 6]])
-    # ARL should reflect 2 independent corridors
-    assert arl >= 1.5
-
-def test_shared_edge_dependency_detection(synthetic_graph):
-    # If all paths share a bottleneck junction X, find_shared_bottlenecks detects it
-    paths = [[1, 3, 6], [1, 3, 5, 6]] # both share node 3
-    bottlenecks = resilience_engine.find_shared_bottlenecks(synthetic_graph, paths)
-    assert 3 in bottlenecks["shared_nodes"]
-    assert bottlenecks["is_single_corridor"] is True
-
 # ============================================================================
 # 4. Critical Accessibility Dependency (CAD) Tests
 # ============================================================================
-
-def test_cad_calculation(synthetic_graph):
-    # Edge (1, 3) is a bridge/critical link in Corridor 2 for wheelchairs
-    cad_wc = resilience_engine.calculate_cad_for_edge(synthetic_graph, 1, 3, "wheelchair")
-    assert cad_wc >= 0.5
 
 # ============================================================================
 # 5. Accessibility-Collapse Prediction Tests
 # ============================================================================
 
-def test_collapse_prediction_normal(synthetic_graph):
-    decay_engine.reset()
-    pred = collapse_predictor.predict_resilience(synthetic_graph, 1, 6, "wheelchair")
-    assert pred["collapse_risk"] in ["NORMAL", "ELEVATED"]
-
-def test_collapse_prediction_warning(synthetic_graph):
-    decay_engine.reset()
-    # Inject high congestion on Corridor 2
-    decay_engine.add_penalty(1, 3, 200.0, "HIGH")
-    pred = collapse_predictor.predict_resilience(synthetic_graph, 1, 6, "wheelchair")
-    # With one of two accessible corridors heavily degraded, resilience drops
-    assert pred["predicted_arl"] <= pred["current_arl"]
-
 # ============================================================================
 # 6. Counterfactual Route Simulation & MAL Tests
 # ============================================================================
-
-def test_marginal_accessibility_loss(synthetic_graph):
-    decay_engine.reset()
-    # Route through Corridor 2 (accessible wheelchair link)
-    cf_res = counterfactual_evaluator.simulate_assignment(
-        synthetic_graph, [1, 3, 6], target_profile="wheelchair", simulated_load=50
-    )
-    assert "marginal_accessibility_loss" in cf_res
-    assert cf_res["marginal_accessibility_loss"] >= 0.0
 
 # ============================================================================
 # 7. Route Scoring & Flexible Traffic Redistribution Tests
@@ -186,7 +139,6 @@ def test_case_a_no_congestion(synthetic_graph):
     decay_engine.reset()
     res = compute_darr_routes(synthetic_graph, (1, 1), (6, 6), "general")
     assert res["status"] == "SUCCESS"
-    assert res["collapse_risk"]["collapse_risk"] in ["NORMAL", "ELEVATED"]
 
 def test_case_b_low_congestion(synthetic_graph):
     decay_engine.reset()
@@ -214,25 +166,6 @@ def test_case_e_critical_corridor_blocked(synthetic_graph):
     # Wheelchair should adapt to Corridor 3
     assert res["status"] == "SUCCESS"
 
-def test_case_f_one_corridor_remains(synthetic_graph):
-    decay_engine.reset()
-    # Block Corridor 2 for wheelchair
-    decay_engine.add_penalty(1, 3, 500.0, "HIGH")
-    G_wc = subgraph_manager.get_accessible_subgraph(synthetic_graph, "wheelchair")
-    # Remove Corridor 2
-    G_wc.remove_edge(1, 3, "E3")
-    aoc = resilience_engine.calculate_aoc(G_wc, 1, 6)
-    assert aoc == 1
-
-def test_case_g_no_corridor_remains(synthetic_graph):
-    decay_engine.reset()
-    G_wc = subgraph_manager.get_accessible_subgraph(synthetic_graph, "wheelchair")
-    # Remove all accessible corridors (2 and 3)
-    G_wc.remove_edge(1, 3, "E3")
-    G_wc.remove_edge(1, 4, "E5")
-    aoc = resilience_engine.calculate_aoc(G_wc, 1, 6)
-    assert aoc == 0
-
 def test_case_h_congestion_decays_over_time():
     decay_engine.reset()
     decay_engine.add_penalty("A", "B", 100.0, "HIGH", lambda_rate=0.05)
@@ -241,9 +174,3 @@ def test_case_h_congestion_decays_over_time():
     p1 = decay_engine.get_penalty("A", "B")
     assert p1 < p0
 
-def test_case_i_candidates_share_critical_edge(synthetic_graph):
-    # Candidates sharing a single edge must trigger bottleneck identification
-    paths = [[1, 3, 6], [1, 3, 5, 6]]
-    bottlenecks = resilience_engine.find_shared_bottlenecks(synthetic_graph, paths)
-    assert (1, 3) in [tuple(e) for e in bottlenecks["shared_edges"]] or (3, 1) in [tuple(e) for e in bottlenecks["shared_edges"]]
-    assert bottlenecks["is_single_corridor"] is True

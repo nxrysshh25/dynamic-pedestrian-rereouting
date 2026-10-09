@@ -1,4 +1,11 @@
-from src.pada_r.profiles import PADA_PROFILES, evaluate_feasibility
+from src.pada_r.profiles import (
+    PADA_PROFILES, 
+    evaluate_feasibility, 
+    is_edge_allowed, 
+    PROFILE_CONGESTION_MULTIPLIERS,
+    _extract_stairs,
+    _extract_slope
+)
 from src.config.loader import WEIGHTS_CONFIG
 from src.signal_decay.engine import decay_engine
 from src.models.edge_state import EdgeState, PhysicalState, AccessibilityState, DynamicState, TemporalState
@@ -7,35 +14,37 @@ from src.weather.impact import calculate_weather_impact
 import math
 
 def build_edge_state(u, v, data) -> EdgeState:
-    base_dist = data.get('length', data.get('length_m', 0))
+    base_dist = data.get('length_m', data.get('length', 0))
     if hasattr(base_dist, 'iloc'): base_dist = base_dist.iloc[0]
+    try:
+        base_dist = float(base_dist)
+    except (TypeError, ValueError):
+        base_dist = 0.0
     
     physical = PhysicalState(
         distance=base_dist,
         highway=data.get('highway', 'unknown'),
-        surface=data.get('surface', 'unknown')
+        surface=data.get('surface_type', data.get('surface', 'unknown'))
     )
     
     accessibility = AccessibilityState(
-        stairs=data.get('stairs', False),
-        ramp=data.get('ramp', False),
-        slope_percent=data.get('slope_percent'),
+        stairs=_extract_stairs(data),
+        ramp=bool(data.get('ramp', False)),
+        slope_percent=_extract_slope(data),
         slope_status=data.get('slope_status', 'unknown'),
         crossing=data.get('crossing', 'no'),
         barrier=data.get('barrier', 'no'),
-        subway=data.get('subway', False)
+        subway=bool(data.get('subway', False))
     )
     
     # Base Dynamic State without weather
-    # In the future, this will be populated directly from real IoT event ingestion.
-    # We check if the data dict already has these dynamic fields.
     congestion_penalty = data.get('congestion_penalty', 0.0)
     water_depth = data.get('water_depth', 0.0)
         
     dynamic = DynamicState(
         congestion_penalty=congestion_penalty,
         active_events=0,
-        weather_impact=0.0, # to be calculated
+        weather_impact=0.0,
         waterlogging_depth=water_depth
     )
     
@@ -43,7 +52,7 @@ def build_edge_state(u, v, data) -> EdgeState:
     
     return EdgeState(u=u, v=v, physical=physical, accessibility=accessibility, dynamic=dynamic, temporal=temporal)
 
-def calculate_pada_cost(u, v, data, profile_name):
+def calculate_pada_cost(u, v, data, profile_name, dynamic_congestion_penalty=0.0):
     """
     Evaluates the PADA-R cost for a given edge using normalized multipliers.
     Returns (status, total_cost, breakdown, explanation_list)
@@ -55,24 +64,36 @@ def calculate_pada_cost(u, v, data, profile_name):
         
     weights = PADA_PROFILES[profile_name]
     
-    # 1. Build unified Edge State
-    edge_state = build_edge_state(u, v, data)
+    # Step 1: Check hard constraints
+    allowed, rejection_reason = is_edge_allowed(data, profile_name)
+    if not allowed:
+        return 'INACCESSIBLE', float('inf'), None, [rejection_reason]
     
-    # 2. Feasibility Gate & Base Multipliers
+    # Update data with dynamic congestion penalty so build_edge_state picks it up
+    data_copy = data.copy()
+    if dynamic_congestion_penalty > 0:
+        data_copy['congestion_penalty'] = dynamic_congestion_penalty
+    
+    # Build unified Edge State
+    edge_state = build_edge_state(u, v, data_copy)
+    
+    # Feasibility Gate & Base Multipliers
     status, multipliers, explanation = evaluate_feasibility(data, profile_name)
     if status == 'INACCESSIBLE':
         return status, float('inf'), None, explanation
         
     base_dist = edge_state.physical.distance
     
-    # 3. Normalized Accessibility, Effort, Safety Costs
+    # Normalized Accessibility, Effort, Safety Costs
     weighted_dist = base_dist * weights["distance_weight"]
     weighted_acc = base_dist * weights["accessibility_weight"] * multipliers["accessibility"]
     weighted_eff = base_dist * weights["effort_weight"] * multipliers["effort"]
     weighted_saf = base_dist * weights["safety_weight"] * multipliers["safety"]
     
-    # 4. Congestion Cost
-    weighted_cong = edge_state.dynamic.congestion_penalty * weights["congestion_weight"]
+    # Congestion Cost with profile-specific multiplier
+    from src.congestion.config import CongestionConfig
+    cong_multiplier = PROFILE_CONGESTION_MULTIPLIERS.get(profile_name, weights.get("congestion_weight", 1.0))
+    weighted_cong = base_dist * edge_state.dynamic.congestion_penalty * cong_multiplier * CongestionConfig.CONGESTION_WEIGHT
         
     # 5. Traffic Signal Cost
     signal_cost = 0.0
